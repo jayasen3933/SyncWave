@@ -115,7 +115,7 @@ const Auth = ({ isLogin }) => {
         <div className="branding-header">
           <div className="logo-container">
             <div className="logo">
-              <span className="logo-icon">♫</span>
+              <img src="/logo.png" alt="App Logo" className="logo-icon" style={{ height: '100px', width: '170px', borderRadius: '50%' }} />
             </div>
             <div className="branding-text">
               <h1>SyncWave</h1>

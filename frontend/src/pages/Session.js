@@ -1250,7 +1250,9 @@ function Session() {
             </div>
           </div>
           <div className="syncwave-logo">
-            <div className="logo-icon"></div>
+          <div className="logo">
+              <img src="/logo.png" alt="App Logo" className="logo-icon" style={{ height: '60px', width: '60px', borderRadius: '50%' }} />
+            </div>
             <span className="logo-text">SyncWave</span>
           </div>
           <button

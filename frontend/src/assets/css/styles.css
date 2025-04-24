@@ -66,6 +66,15 @@ body {
     font-size: 24px;
 }
 
+img.logo-icon {
+    border-radius: 50%;
+    /* 50% creates a perfect circle */
+    width: 100px;
+    /* Example: Set equal width and height */
+    height: 100px;
+    /* Adjust to your desired size */
+}
+
 .app-name {
     font-size: 2rem;
     font-weight: bold;
@@ -130,12 +139,14 @@ body {
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
 }
 
-.login-header, .form-header {
+.login-header,
+.form-header {
     text-align: center;
     margin-bottom: 2rem;
 }
 
-.login-logo, .form-icon {
+.login-logo,
+.form-icon {
     background-color: var(--primary-color);
     width: 60px;
     height: 60px;
@@ -349,7 +360,8 @@ body {
         flex-direction: column;
     }
 
-    .left-section, .right-section {
+    .left-section,
+    .right-section {
         width: 100%;
         padding: 2rem;
     }
@@ -372,7 +384,8 @@ body {
         padding: 1.5rem;
     }
 
-    .login-card, .signup-card {
+    .login-card,
+    .signup-card {
         padding: 1.5rem;
     }
 }

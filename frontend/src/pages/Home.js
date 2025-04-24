@@ -92,7 +92,7 @@ function Home() {
       <div className="content-container">
         <div className="header-section">
           <div className="logo">
-            <div className="logo-icon">♫</div>
+            <img src="/logo.png" alt="App Logo" className="logo-icon" style={{ height: '100px', width: '170px', borderRadius: '50%' }} />
           </div>
           <h1 className="title">SyncWave</h1>
           <p className="subtitle">Music Sessions with Friends</p>

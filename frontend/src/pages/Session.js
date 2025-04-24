@@ -5,10 +5,10 @@ import timesync from 'timesync';
 import { useAuth } from '../context/AuthContext';
 import './Session.css';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { 
-  faPlay, 
-  faPause, 
-  faForward, 
+import {
+  faPlay,
+  faPause,
+  faForward,
   faBackward,
   faPoll,
   faPaperPlane,
@@ -274,15 +274,15 @@ function Session() {
       const now = Date.now();
       const latency = now - data.timestamp;
       networkLatencyRef.current = latency;
-  
+
       if (data.timestamp > lastUpdateTimeRef.current) {
         lastUpdateTimeRef.current = data.timestamp;
         setIsPlaying(data.isPlaying);
-  
+
         if (data.song) {
           setCurrentSong(data.song);
         }
-  
+
         if (audioRef.current) {
           // Only update time if drift is significant
           const expectedTime = data.currentTime + latency / 1000;
@@ -290,7 +290,7 @@ function Session() {
             audioRef.current.currentTime = expectedTime;
           }
           setCurrentTime(expectedTime);
-  
+
           if (data.isPlaying) {
             audioRef.current.play().catch((error) => {
               console.log('Playback failed:', error);
@@ -304,7 +304,7 @@ function Session() {
     }
     isLocalUpdate.current = false;
   };
-  
+
   const handlePollVote = (data) => {
     const { pollId, optionIndex, updatedOption } = data;
     setMessages((prev) =>
@@ -318,19 +318,19 @@ function Session() {
       })
     );
   };
-  
+
   const handleNextSongEvent = (data) => {
     const now = Date.now();
     const latency = now - data.timestamp;
     networkLatencyRef.current = latency;
-  
+
     if (data.timestamp > lastUpdateTimeRef.current || isLocalUpdate.current) {
       lastUpdateTimeRef.current = data.timestamp;
-  
+
       setCurrentSong(data.song);
       setCurrentTime(0);
       setIsPlaying(true);
-  
+
       if (audioRef.current) {
         audioRef.current.currentTime = 0;
         audioRef.current.src = data.song.url;
@@ -341,19 +341,19 @@ function Session() {
     }
     isLocalUpdate.current = false;
   };
-  
+
   const handlePreviousSongEvent = (data) => {
     const now = Date.now();
     const latency = now - data.timestamp;
     networkLatencyRef.current = latency;
-  
+
     if (data.timestamp > lastUpdateTimeRef.current || isLocalUpdate.current) {
       lastUpdateTimeRef.current = data.timestamp;
-  
+
       setCurrentSong(data.song);
       setCurrentTime(0);
       setIsPlaying(true);
-  
+
       if (audioRef.current) {
         audioRef.current.currentTime = 0;
         audioRef.current.src = data.song.url;
@@ -364,7 +364,7 @@ function Session() {
     }
     isLocalUpdate.current = false;
   };
-  
+
   const handleSyncPlayback = useCallback((data) => {
     if (audioRef.current) {
       const clientTime = Date.now();
@@ -393,7 +393,7 @@ function Session() {
       setIsPlaying(data.isPlaying);
     }
   }, []);
-  
+
   const handleSyncResponse = (data) => {
     if (audioRef.current) {
       const clientTime = Date.now();
@@ -422,7 +422,7 @@ function Session() {
       }
     }
   };
-  
+
   const handlePreparePlayback = useCallback((data) => {
     setIsReady(false); // Disable controls during preparation
     if (audioRef.current) {
@@ -435,7 +435,7 @@ function Session() {
       timestamp: tsRef.current.now(),
     });
   }, [sessionId, user]);
-  
+
   const handleStartSyncPlayback = (data) => {
     if (audioRef.current) {
       const now = tsRef.current.now();
@@ -494,7 +494,7 @@ function Session() {
         console.error('Error creating timesync:', error);
         tsRef.current = {
           now: () => Date.now(),
-          destroy: () => {}
+          destroy: () => { }
         };
       }
     });
@@ -564,10 +564,10 @@ function Session() {
           setParticipantCount(data.participantCount);
         }
         if (data.username) {
-          setParticipants(prev => [...prev, { 
-            id: data.userId, 
+          setParticipants(prev => [...prev, {
+            id: data.userId,
             name: data.username,
-            isCurrentUser: data.userId === user._id 
+            isCurrentUser: data.userId === user._id
           }]);
         }
       },
@@ -620,10 +620,10 @@ function Session() {
       Object.keys(handlers).forEach(event => {
         socket.off(event);
       });
-      
+
       // Disconnect socket
       socket.disconnect();
-      
+
       // Cleanup timesync
       if (tsRef.current && typeof tsRef.current.destroy === 'function') {
         tsRef.current.destroy();
@@ -699,13 +699,13 @@ function Session() {
   useEffect(() => {
     if (audioRef.current) {
       const audio = audioRef.current;
-      
+
       const handleProgress = () => {
         if (audio.buffered.length > 0) {
           const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
           const bufferPercentage = bufferedEnd / audio.duration;
           setBufferProgress(bufferPercentage);
-          
+
           // Start playback if enough buffer is loaded
           if (bufferPercentage >= MIN_BUFFER_PERCENTAGE && isPlaying && !audio.playing) {
             audio.play().catch(error => {
@@ -774,10 +774,10 @@ function Session() {
   const handleFileUpload = async (event) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
-  
+
     const newSongs = [];
     const supportedFormats = ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'wma', 'flac'];
-  
+
     for (const file of files) {
       const fileExtension = file.name.split('.').pop().toLowerCase();
       if (!supportedFormats.includes(fileExtension)) {
@@ -788,27 +788,27 @@ function Session() {
         );
         continue;
       }
-  
+
       const formData = new FormData();
       formData.append('song', file);
       formData.append('sessionId', sessionId);
       formData.append('title', file.name);
-  
+
       try {
         // Set initial upload status
         console.log('Setting initial upload status for:', file.name);
         setUploadStatus(prev => {
           const newStatus = {
             ...prev,
-            [file.name]: { 
-              status: 'uploading', 
-              message: `${file.name} is being uploaded by ${user.name}...` 
+            [file.name]: {
+              status: 'uploading',
+              message: `${file.name} is being uploaded by ${user.name}...`
             }
           };
           console.log('New upload status state (detailed):', JSON.stringify(newStatus, null, 2));
           return newStatus;
         });
-  
+
         console.log('Starting upload for:', file.name);
         const response = await fetch(`${API_URL}/api/songs/upload`, {
           method: 'POST',
@@ -817,47 +817,47 @@ function Session() {
           },
           body: formData,
         });
-  
+
         if (!response.ok) {
           throw new Error(`Upload failed with status ${response.status}`);
         }
-  
+
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
-  
+
         try {
           while (true) {
             const { value, done } = await reader.read();
-            
+
             if (done) break;
-            
+
             const chunk = decoder.decode(value, { stream: true });
             buffer += chunk;
-            
+
             // Process complete JSON objects
             const lines = buffer.split('\n');
             buffer = lines.pop() || ''; // Keep the last incomplete line in the buffer
-            
+
             for (const line of lines) {
               if (line.trim()) {
                 try {
                   const update = JSON.parse(line.trim());
                   console.log('Server status update (detailed):', JSON.stringify(update, null, 2));
-                  
+
                   setUploadStatus(prev => {
                     console.log('Previous upload status:', JSON.stringify(prev, null, 2));
                     const newStatus = {
                       ...prev,
-                      [file.name]: { 
-                        status: update.status, 
-                        message: update.message 
+                      [file.name]: {
+                        status: update.status,
+                        message: update.message
                       }
                     };
                     console.log('New upload status:', JSON.stringify(newStatus, null, 2));
                     return newStatus;
                   });
-  
+
                   if (update.status === 'complete' && update.song) {
                     newSongs.push({
                       name: update.song.title,
@@ -876,19 +876,30 @@ function Session() {
         } finally {
           reader.releaseLock();
         }
-  
+
       } catch (error) {
         console.error('Error uploading file:', error);
         setUploadStatus(prev => ({
           ...prev,
-          [file.name]: { 
-            status: 'error', 
-            message: `Failed to upload "${file.name}" by ${user.name}: ${error.message}` 
+          [file.name]: {
+            status: 'error',
+            message: `Failed to upload "${file.name}" by ${user.name}: ${error.message}`
           }
         }));
+
+        // Auto-clear error message after 3 seconds
+        setTimeout(() => {
+          setUploadStatus(prev => {
+            const newStatus = { ...prev };
+            if (newStatus[file.name] && newStatus[file.name].status === 'error') {
+              delete newStatus[file.name];
+            }
+            return newStatus;
+          });
+        }, 3000);
       }
     }
-  
+
     if (newSongs.length > 0) {
       console.log('Adding songs to session:', newSongs);
       socketRef.current.emit('upload-songs', {
@@ -896,7 +907,7 @@ function Session() {
         songs: newSongs,
       });
     }
-  
+
     // Clear successful upload statuses after 5 seconds
     setTimeout(() => {
       setUploadStatus(prev => {
@@ -914,52 +925,44 @@ function Session() {
   const playSong = (song) => {
     if (!audioRef.current) return;
 
-    // Emit a prepare-song event first instead of immediately playing
-    socketRef.current.emit('prepare-song', {
-      sessionId,
-      song,
-      timestamp: Date.now(),
-    });
-    
-    // The actual playback will be managed by the server after everyone is ready
-    // Local UI updates to show buffering state
-    setCurrentSong(song);
-    setIsPlaying(false);
+    isLocalUpdate.current = true;
+    lastUpdateTimeRef.current = Date.now();
     setIsBuffering(true);
-    setIsReady(false); // Disable controls during preparation
-    
-    // Load song but don't play yet
+
+    setCurrentSong(song);
+    setCurrentTime(0);
+    setIsPlaying(true);
+
     const streamingUrl = `${API_URL}/api/songs/${song._id}/stream`;
     audioRef.current.src = streamingUrl;
     audioRef.current.preload = 'auto';
-    
+
     audioRef.current.onloadedmetadata = () => {
       setDuration(audioRef.current.duration);
     };
 
-    // When enough is buffered, tell the server we're ready
     audioRef.current.oncanplay = () => {
       if (bufferProgress >= MIN_BUFFER_PERCENTAGE) {
-        socketRef.current.emit('player-ready', {
-          sessionId,
-          userId: user._id,
-          song: song,
-          timestamp: tsRef.current.now(),
+        audioRef.current.play().catch(error => {
+          console.error('Playback failed:', error);
+          setIsPlaying(false);
         });
       }
     };
-    
+
     audioRef.current.onerror = () => {
       console.error('Error loading audio');
+      setIsPlaying(false);
       setIsBuffering(false);
-      setIsReady(true); // Re-enable controls
-      socketRef.current.emit('player-error', {
-        sessionId,
-        userId: user._id,
-        song: song,
-        timestamp: Date.now(),
-      });
     };
+
+    socketRef.current.emit('play-song', {
+      sessionId,
+      song,
+      currentTime: 0,
+      isPlaying: true,
+      timestamp: Date.now(),
+    });
   };
 
   const handleTimeUpdate = () => {
@@ -1161,15 +1164,15 @@ function Session() {
             {message.poll.options.some((opt) =>
               opt.voters.includes(user._id)
             ) && (
-              <span className="your-votes">
-                Your votes:{' '}
-                {
-                  message.poll.options.filter((opt) =>
-                    opt.voters.includes(user._id)
-                  ).length
-                }
-              </span>
-            )}
+                <span className="your-votes">
+                  Your votes:{' '}
+                  {
+                    message.poll.options.filter((opt) =>
+                      opt.voters.includes(user._id)
+                    ).length
+                  }
+                </span>
+              )}
           </div>
         </div>
       );
@@ -1224,7 +1227,7 @@ function Session() {
         song: currentSong,
         clientTime: Date.now(),
       });
-      
+
       // Reset syncing state after animation
       setTimeout(() => {
         setIsSyncing(false);
@@ -1387,9 +1390,8 @@ function Session() {
             {songs.map((song, index) => (
               <li
                 key={index}
-                className={`song-item ${
-                  currentSong && currentSong.name === song.name ? 'playing' : ''
-                }`}
+                className={`song-item ${currentSong && currentSong.name === song.name ? 'playing' : ''
+                  }`}
               >
                 <div className="song-item-content">
                   <button
@@ -1432,7 +1434,7 @@ function Session() {
             ))}
           </ul>
           {/* Show any active upload statuses for files not yet in songs list */}
-          {Object.entries(uploadStatus).map(([filename, status]) => 
+          {Object.entries(uploadStatus).map(([filename, status]) =>
             !songs.find(song => song.name === filename) && (
               <div key={filename} className={`upload-status ${status.status}`}>
                 {status.message}
@@ -1459,7 +1461,7 @@ function Session() {
             <div className="wave"></div>
             <div className="wave"></div>
             <div className="wave"></div>
-            
+
             <div className="player-content">
               {/* Existing content */}
             </div>
@@ -1468,23 +1470,16 @@ function Session() {
           <div className="player-controls-wrapper">
             <div className="current-song-title">
               {currentSong ? currentSong.name : 'No song playing'}
-              {isBuffering && !countdownTime && (
-                <div className="buffering-status">
-                  <span className="buffering-indicator">Buffering...</span>
-                  {!isReady && readyCount > 0 && (
-                    <span className="ready-count">{readyCount}/{totalCount} ready</span>
-                  )}
-                </div>
-              )}
+              {isBuffering && <span className="buffering-indicator">Buffering...</span>}
             </div>
-            
+
             <div className="buffer-progress">
-              <div 
-                className="buffer-bar" 
+              <div
+                className="buffer-bar"
                 style={{ width: `${bufferProgress * 100}%` }}
               />
             </div>
-            
+
             <div
               className="progress-container"
               onClick={handleSeek}
@@ -1495,7 +1490,7 @@ function Session() {
                 style={{ width: `${(currentTime / duration) * 100}%` }}
               />
             </div>
-            
+
             <div className="time-display">
               <span>{formatTime(currentTime)}</span>
               <span>{formatTime(duration)}</span>
@@ -1542,11 +1537,10 @@ function Session() {
           </div>
         </div>
 
-        {/* Overlay for countdown and syncing */}
         {countdownTime && (
           <div className="sync-overlay">
             <div className="sync-status">
-              <div>Preparing to play</div>
+              <div>Synchronizing playback...</div>
               <div>
                 Ready: {readyCount}/{totalCount}
               </div>
@@ -1555,7 +1549,8 @@ function Session() {
                 {Math.max(
                   0,
                   Math.floor((countdownTime - (tsRef.current?.now() || Date.now())) / 1000)
-                )}s
+                )}
+                s
               </div>
             </div>
           </div>

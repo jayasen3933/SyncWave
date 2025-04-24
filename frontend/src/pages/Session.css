@@ -439,7 +439,8 @@
   background-color: var(--card-background);
   border-radius: 16px;
   padding: 2rem;
-  padding-bottom: 1rem; /* Add padding at bottom for controls */
+  padding-bottom: 1rem;
+  /* Add padding at bottom for controls */
   border: 1px solid var(--input-border);
   display: flex;
   flex-direction: column;
@@ -466,7 +467,8 @@
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
   transition: transform 0.3s ease, box-shadow 0.3s ease, scale 0.5s ease;
   cursor: pointer;
-  scale: 0.5625; /* Changed from 0.75 to 0.5625 (75% of 75%) */
+  scale: 0.5625;
+  /* Changed from 0.75 to 0.5625 (75% of 75%) */
 }
 
 /* Hover effect */
@@ -503,7 +505,8 @@
   border: 2px solid var(--accent-color);
   animation: wave-out 6s infinite;
   opacity: 0;
-  display: none; /* Hide by default when paused */
+  display: none;
+  /* Hide by default when paused */
 }
 
 /* Show and animate waves only when playing */
@@ -528,8 +531,10 @@
 .session-page .player-circle::after {
   content: '';
   position: absolute;
-  width: calc(100% - 24px); /* Changed from 48px to 24px to reduce thickness by half */
-  height: calc(100% - 24px); /* Changed from 48px to 24px to reduce thickness by half */
+  width: calc(100% - 24px);
+  /* Changed from 48px to 24px to reduce thickness by half */
+  height: calc(100% - 24px);
+  /* Changed from 48px to 24px to reduce thickness by half */
   border-radius: 50%;
   background: #1a1625;
   z-index: 1;
@@ -538,8 +543,10 @@
 .session-page .player-content {
   position: relative;
   z-index: 2;
-  width: calc(100% - 36px); /* Changed from 72px to 36px to reduce thickness by half */
-  height: calc(100% - 36px); /* Changed from 72px to 36px to reduce thickness by half */
+  width: calc(100% - 36px);
+  /* Changed from 72px to 36px to reduce thickness by half */
+  height: calc(100% - 36px);
+  /* Changed from 72px to 36px to reduce thickness by half */
   border-radius: 50%;
   background: #1a1625;
   display: flex;
@@ -557,6 +564,7 @@
   from {
     transform: rotate(0deg);
   }
+
   to {
     transform: rotate(360deg);
   }
@@ -568,6 +576,7 @@
     height: 100%;
     opacity: 0.5;
   }
+
   100% {
     width: 150%;
     height: 150%;
@@ -594,7 +603,8 @@
 }
 
 .session-page .progress-container {
-  width: 100%;  /* Changed from 500% to 100% to fit in the container */
+  width: 100%;
+  /* Changed from 500% to 100% to fit in the container */
   height: 10px;
   background-color: rgba(255, 255, 255, 0.1);
   border-radius: 10px;
@@ -602,8 +612,10 @@
   margin: 0 auto;
   position: relative;
   transition: height 0.2s ease-in-out;
-  transform: none;  /* Remove transform since we don't need to offset anymore */
-  left: auto;  /* Remove left positioning */
+  transform: none;
+  /* Remove transform since we don't need to offset anymore */
+  left: auto;
+  /* Remove left positioning */
   margin-bottom: 5px;
 }
 
@@ -639,15 +651,18 @@
 }
 
 .session-page .time-display {
-  width: 100%;  /* Changed from 500% to 100% to match progress bar */
+  width: 100%;
+  /* Changed from 500% to 100% to match progress bar */
   display: flex;
   justify-content: space-between;
   color: rgba(255, 255, 255, 0.7);
   font-size: 14px;
   margin: 0 auto 10px;
   padding: 0 5px;
-  transform: none;  /* Remove transform since we don't need to offset anymore */
-  left: auto;  /* Remove left positioning */
+  transform: none;
+  /* Remove transform since we don't need to offset anymore */
+  left: auto;
+  /* Remove left positioning */
   position: relative;
 }
 
@@ -704,6 +719,8 @@
   margin-bottom: 0.5rem;
   cursor: pointer;
   transition: all 0.3s ease;
+  color: #ffffff;
+  /* Adding explicit white color for the poll option button */
 }
 
 .session-page .poll-option:hover {
@@ -723,6 +740,8 @@
   font-family: 'Cabinet Grotesk', sans-serif;
   font-size: 0.9375rem;
   letter-spacing: -0.01em;
+  color: #ffffff;
+  /* Adding explicit white color for poll option text */
 }
 
 .session-page .vote-indicator {
@@ -1179,6 +1198,7 @@
     opacity: 0;
     transform: translateY(-20px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -1236,10 +1256,25 @@
 }
 
 @keyframes fadeInOut {
-  0% { opacity: 0; transform: translateX(-5px); }
-  20% { opacity: 1; transform: translateX(0); }
-  80% { opacity: 1; transform: translateX(0); }
-  100% { opacity: 0; transform: translateX(5px); }
+  0% {
+    opacity: 0;
+    transform: translateX(-5px);
+  }
+
+  20% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  80% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(5px);
+  }
 }
 
 .upload-status-container {
@@ -1286,7 +1321,8 @@
 
 .song-item .upload-status {
   position: absolute;
-  right: 120px; /* Adjust based on your controls width */
+  right: 120px;
+  /* Adjust based on your controls width */
   top: 50%;
   transform: translateY(-50%);
   padding: 4px 8px;
@@ -1325,13 +1361,23 @@
 }
 
 @keyframes fadeOut {
-  0% { opacity: 1; }
-  70% { opacity: 1; }
-  100% { opacity: 0; visibility: hidden; }
+  0% {
+    opacity: 1;
+  }
+
+  70% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    visibility: hidden;
+  }
 }
 
 .upload-status {
-  display: block; /* Ensure visibility */
+  display: block;
+  /* Ensure visibility */
   font-size: 0.85rem;
   margin: 0.5rem 0;
   padding: 8px 12px;
@@ -1358,9 +1404,11 @@
   0% {
     background-color: var(--card-background);
   }
+
   50% {
     background-color: rgba(52, 152, 219, 0.1);
   }
+
   100% {
     background-color: var(--card-background);
   }
@@ -1379,13 +1427,33 @@
 }
 
 @keyframes fadeInOut {
-  0% { opacity: 0; transform: translateY(-10px); }
-  10% { opacity: 1; transform: translateY(0); }
-  90% { opacity: 1; transform: translateY(0); }
-  100% { opacity: 0; transform: translateY(-10px); }
+  0% {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+
+  10% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  90% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
 }
 
-
+.buffering-indicator {
+  font-size: 0.8em;
+  color: #666;
+  margin-left: 10px;
+  animation: pulse 1.5s infinite;
+}
 
 .buffer-progress {
   height: 3px;
@@ -1401,6 +1469,19 @@
   transition: width 0.3s ease;
 }
 
+@keyframes pulse {
+  0% {
+    opacity: 0.5;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0.5;
+  }
+}
 
 .sync-btn {
   background-color: rgba(255, 255, 255, 0.2);
@@ -1440,31 +1521,8 @@
   0% {
     transform: rotate(0deg);
   }
+
   100% {
     transform: rotate(360deg);
   }
-}
-.buffering-status {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-top: 5px;
-}
-
-.buffering-indicator {
-  color: orange;
-  margin-left: 10px;
-  animation: pulse 1.5s infinite;
-}
-
-.ready-count {
-  font-size: 0.9em;
-  color: #aaa;
-  margin-top: 4px;
-}
-
-@keyframes pulse {
-  0% { opacity: 0.6; }
-  50% { opacity: 1; }
-  100% { opacity: 0.6; }
 }

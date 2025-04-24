@@ -111,10 +111,10 @@ async function deleteMongoSession(sessionId) {
 
       // Delete all songs associated with this session
       await Song.deleteMany({ session: session._id });
-      
+
       // Delete the session
       await Session.deleteOne({ sessionId });
-      
+
       console.log(`MongoDB session ${sessionId} and its songs deleted`);
       return true;
     } catch (error) {
@@ -271,7 +271,7 @@ const handleExistingUserSocket = async (userId) => {
       if (participants) {
         participants.delete(userId);
         const currentCount = updateParticipantCount(sessionId);
-        existingSocket.to(sessionId).emit('user-left', { 
+        existingSocket.to(sessionId).emit('user-left', {
           userId,
           participantCount: currentCount
         });
@@ -283,8 +283,8 @@ const handleExistingUserSocket = async (userId) => {
 
 // Generate a unique session ID
 function generateSessionId() {
-  return Math.random().toString(36).substring(2, 15) + 
-         Math.random().toString(36).substring(2, 15);
+  return Math.random().toString(36).substring(2, 15) +
+    Math.random().toString(36).substring(2, 15);
 }
 
 // Clean up empty sessions
@@ -301,7 +301,7 @@ const updateParticipantCount = (sessionId) => {
 
     // If count becomes 0, schedule deletion
     if (count === 0) {
-      console.log(`Scheduling deletion for empty session ${sessionId} in ${SESSION_CLEANUP_DELAY/1000} seconds`);
+      console.log(`Scheduling deletion for empty session ${sessionId} in ${SESSION_CLEANUP_DELAY / 1000} seconds`);
       const timeoutId = setTimeout(async () => {
         // Check again if still empty before deleting
         const currentCount = participantCounts.get(sessionId) || 0;
@@ -312,7 +312,7 @@ const updateParticipantCount = (sessionId) => {
           sessions.delete(sessionId);
           sessionDeletionTimeouts.delete(sessionId);
           participantNames.clear(); // Clean up all participant names
-          
+
           // Delete session from MongoDB
           try {
             await deleteMongoSession(sessionId);
@@ -327,7 +327,7 @@ const updateParticipantCount = (sessionId) => {
           }
         }
       }, SESSION_CLEANUP_DELAY);
-      
+
       sessionDeletionTimeouts.set(sessionId, timeoutId);
     } else {
       // If count is not 0, cancel any pending deletion
@@ -347,9 +347,9 @@ io.on('connection', (socket) => {
     const sessionId = data.sessionId || generateSessionId();
     const sessionName = data.sessionName || 'Untitled Session';
     const userId = data.userId;
-    
+
     console.log(`Creating session: ${sessionId} with name: ${sessionName} by user: ${userId}`);
-    
+
     const sessionData = {
       name: sessionName,
       songs: [],
@@ -359,18 +359,18 @@ io.on('connection', (socket) => {
       messages: [],
       polls: []
     };
-    
+
     // Create session in MongoDB
     const mongoSession = await createOrUpdateMongoSession(sessionId, sessionData, userId);
-    
+
     // Keep in-memory copy for real-time operations
     sessions.set(sessionId, sessionData);
-    
+
     // Initialize participants tracking
     if (!sessionParticipants.has(sessionId)) {
       sessionParticipants.set(sessionId, new Set());
     }
-    
+
     if (userId) {
       const participants = sessionParticipants.get(sessionId);
       participants.add(userId);
@@ -380,7 +380,7 @@ io.on('connection', (socket) => {
       });
       updateParticipantCount(sessionId);
     }
-    
+
     socket.join(sessionId);
     io.to(sessionId).emit('session-name-updated', { sessionName });
     socket.emit('session-created', {
@@ -394,7 +394,7 @@ io.on('connection', (socket) => {
   socket.on('update-session-name', (data) => {
     const { sessionId, sessionName } = data;
     console.log(`Updating session name to: ${sessionName} for session: ${sessionId}`);
-    
+
     const session = sessions.get(sessionId);
     if (session) {
       session.name = sessionName;
@@ -406,22 +406,22 @@ io.on('connection', (socket) => {
   // Handle session joining
   socket.on('join-session', async (data) => {
     const { sessionId, userId, username, sessionName } = data;
-    
+
     // Store the username
     participantNames.set(userId, username);
-    
+
     // Handle existing socket for this user if any
     await handleExistingUserSocket(userId);
-    
+
     // Store this as the active socket for this user
     activeUserSockets.set(userId, socket);
-    
+
     console.log(`User ${userId} attempting to join session: ${sessionId}`);
     console.log("Available sessions:", Array.from(sessions.keys()));
-    
+
     // Make sure the sessionId is a string and properly trimmed
     const normalizedSessionId = String(sessionId).trim();
-    
+
     // Check if user is already in the session
     if (isUserInSession(userId, normalizedSessionId)) {
       console.log(`User ${userId} is already in session ${normalizedSessionId}`);
@@ -430,11 +430,11 @@ io.on('connection', (socket) => {
 
     // Try to get session from MongoDB first
     let mongoSession = await getMongoSession(normalizedSessionId);
-    
+
     if (!mongoSession && !sessions.has(normalizedSessionId)) {
       console.log(`Session not found: "${normalizedSessionId}"`);
       console.log(`Session types in map: ${Array.from(sessions.keys()).map(id => typeof id)}`);
-      
+
       // If session doesn't exist and sessionName is provided, create a new session
       if (sessionName) {
         const sessionData = {
@@ -446,18 +446,18 @@ io.on('connection', (socket) => {
           messages: [],
           polls: []
         };
-        
+
         mongoSession = await createOrUpdateMongoSession(normalizedSessionId, sessionData, userId);
         sessions.set(normalizedSessionId, sessionData);
-        
+
         // Initialize participants set
         sessionParticipants.set(normalizedSessionId, new Set());
-        
+
         // Notify all users about the session creation
         io.to(normalizedSessionId).emit('session-created', {
           sessionName: sessionData.name
         });
-        
+
         console.log(`Created new session: ${normalizedSessionId} with name: ${sessionName}`);
       } else {
         // If no sessionName is provided, it means user is trying to join an existing session
@@ -466,24 +466,24 @@ io.on('connection', (socket) => {
         return;
       }
     }
-    
+
     // Update participants in MongoDB
     await updateParticipants(normalizedSessionId, userId, true);
-    
+
     socket.join(normalizedSessionId);
     console.log(`User ${userId} joined room: ${normalizedSessionId}`);
-    
+
     // Store user's current session and socket mapping
     userSessions.set(userId, {
       sessionId: normalizedSessionId,
       socketId: socket.id
     });
-    
+
     // Initialize participants set if it doesn't exist
     if (!sessionParticipants.has(normalizedSessionId)) {
       sessionParticipants.set(normalizedSessionId, new Set());
     }
-    
+
     // Add participant if not already in the session
     const participants = sessionParticipants.get(normalizedSessionId);
     const isNewParticipant = !participants.has(userId);
@@ -492,12 +492,12 @@ io.on('connection', (socket) => {
       console.log(`Added user ${userId} to participants list`);
       updateParticipantCount(normalizedSessionId);
     }
-    
+
     // Get the session
     const session = sessions.get(normalizedSessionId);
-    
+
     // Calculate the current time with server timestamp for better sync
-    const currentTime = session.currentSong ? 
+    const currentTime = session.currentSong ?
       session.currentTime + (Date.now() - (session.lastUpdate || Date.now())) / 1000 : 0;
 
     // Send the full session state to the new client
@@ -519,10 +519,10 @@ io.on('connection', (socket) => {
       serverTime: Date.now(),
       syncId: Date.now()
     });
-    
+
     // Notify other users about the new participant
     if (isNewParticipant) {
-      socket.to(normalizedSessionId).emit('user-joined', { 
+      socket.to(normalizedSessionId).emit('user-joined', {
         userId,
         username,
         participantCount: participants.size
@@ -544,110 +544,61 @@ io.on('connection', (socket) => {
       });
     }
   });
-  socket.on('prepare-song', (data) => {
-    const { sessionId, song } = data;
-    const session = sessions.get(sessionId);
-    
-    if (session) {
-      // Get participants from the sessionParticipants Map
-      const participants = sessionParticipants.get(sessionId) || new Set();
-      const participantCount = participants.size;
-      
-      // Reset ready counters
-      session.readyCount = 0;
-      session.players = participantCount;  // Use participantCount instead
-      session.preparingSong = song;
-      
-      // Notify all clients to start buffering the song
-      io.to(sessionId).emit('prepare-playback', {
-        song,
-        currentTime: 0,
-        timestamp: Date.now(),
-      });
-      
-      // Also send ready state update
-      io.to(sessionId).emit('ready-state-update', {
-        readyCount: 0,
-        totalCount: participantCount  // Use participantCount instead
-      });
-      
-      console.log(`Preparing song "${song.name}" for ${participantCount} participants in session ${sessionId}`);
-    }
-  });
+
   // Handle ready state changes
   socket.on('player-ready', async (data) => {
-    const { sessionId, userId, song, timestamp } = data;
+    const { sessionId, userId, timestamp } = data;
     const session = sessions.get(sessionId);
-    
+
     if (session) {
       // Initialize ready states for session if not exists
       if (!readyStates.has(sessionId)) {
         readyStates.set(sessionId, new Map());
       }
-      
+
       const sessionReadyStates = readyStates.get(sessionId);
-      sessionReadyStates.set(userId, { ready: true, timestamp, song });
-      
-      // Get participants
+      sessionReadyStates.set(userId, { ready: true, timestamp });
+
+      // Check if all participants are ready
       const participants = sessionParticipants.get(sessionId);
-      const participantCount = participants.size;
-      const readyCount = sessionReadyStates.size;
-      
-      console.log(`Session ${sessionId}: ${readyCount}/${participantCount} players ready`);
-      
-      // Check if either all participants are ready OR a threshold percentage (e.g., 75%)
-      // AND at least 3 seconds have passed since the first ready signal
-      const readyPercentage = readyCount / participantCount;
-      const firstReadyTime = Math.min(...Array.from(sessionReadyStates.values()).map(v => v.timestamp));
-      const timeElapsed = Date.now() - firstReadyTime;
-      
-      const allReady = readyCount === participantCount;
-      const sufficientReadiness = readyPercentage >= 1 && timeElapsed > 3000 ;
-      
-      if (allReady || sufficientReadiness) {
+      const allReady = Array.from(participants).every(
+        participantId => sessionReadyStates.get(participantId)?.ready
+      );
+
+      if (allReady) {
         // Calculate sync start time (2 seconds from now)
         const syncStartTime = Date.now() + 2000;
-        
+
         // Clear any existing sync timeout
         if (syncTimeouts.has(sessionId)) {
           clearTimeout(syncTimeouts.get(sessionId));
         }
-        
+
         // Set timeout to start playback
         const timeoutId = setTimeout(() => {
-          // Set the current song from the prepare-song event
-          if (session.preparingSong) {
-            session.currentSong = session.preparingSong;
-            session.currentTime = 0;
-            session.isPlaying = true;
-            session.lastUpdate = Date.now();
-          }
-          
           io.to(sessionId).emit('start-sync-playback', {
             timestamp: syncStartTime,
-            currentTime: 0,
-            isPlaying: true,
-            song: session.preparingSong || session.currentSong
+            currentTime: session.currentTime,
+            isPlaying: session.isPlaying
           });
-          
           // Reset ready states after sync
           sessionReadyStates.clear();
         }, 2000);
-        
+
         syncTimeouts.set(sessionId, timeoutId);
-        
+
         // Notify all clients about countdown
         io.to(sessionId).emit('sync-countdown', {
           startTime: syncStartTime
         });
-        
-        console.log(`Starting playback in session ${sessionId} at ${new Date(syncStartTime).toISOString()}`);
       }
-      
+
       // Notify all clients about ready state update
       io.to(sessionId).emit('ready-state-update', {
-        readyCount: readyCount,
-        totalCount: participantCount
+        userId,
+        ready: true,
+        readyCount: sessionReadyStates.size,
+        totalCount: participants.size
       });
     }
   });
@@ -655,13 +606,13 @@ io.on('connection', (socket) => {
   socket.on('chat-message', async (data) => {
     const { sessionId, message } = data;
     console.log(`Chat message in session ${sessionId}: ${JSON.stringify(message)}`);
-    
+
     // Update MongoDB and broadcast
     const mongoSession = await getMongoSession(sessionId);
     if (mongoSession) {
       mongoSession.messages = [...(mongoSession.messages || []), message];
       await mongoSession.save();
-      
+
       // Only broadcast to other clients, not the sender
       socket.broadcast.to(sessionId).emit('chat-message', message);
     }
@@ -670,7 +621,7 @@ io.on('connection', (socket) => {
   socket.on('upload-songs', async (data) => {
     const { sessionId, songs } = data;
     console.log(`Uploading songs to session ${sessionId}: ${songs.length} songs`);
-    
+
     // Update MongoDB
     const mongoSession = await getMongoSession(sessionId);
     if (mongoSession) {
@@ -682,12 +633,12 @@ io.on('connection', (socket) => {
       mongoSession.songs = [...(mongoSession.songs || []), ...songsWithUrls];
       await mongoSession.save();
     }
-    
+
     // Update in-memory session
     if (!sessions.has(sessionId)) {
       sessions.set(sessionId, { songs: [] });
     }
-    
+
     const session = sessions.get(sessionId);
     // Ensure songs have proper URL format
     const songsWithUrls = songs.map(song => ({
@@ -695,16 +646,16 @@ io.on('connection', (socket) => {
       url: song.url || song.firebaseUrl // Handle both URL formats
     }));
     session.songs = [...(session.songs || []), ...songsWithUrls];
-    
+
     console.log(`Songs after upload: ${session.songs.length}`);
-    
+
     // Broadcast the updated songs list to all clients in the session
     io.to(sessionId).emit('songs-updated', session.songs);
   });
 
   socket.on('play-song', async (data) => {
     const { sessionId, song, currentTime, isPlaying } = data;
-    
+
     // Update MongoDB
     const mongoSession = await getMongoSession(sessionId);
     if (mongoSession) {
@@ -718,13 +669,13 @@ io.on('connection', (socket) => {
       mongoSession.lastUpdate = Date.now();
       await mongoSession.save();
     }
-    
+
     // Update in-memory session
     if (!sessions.has(sessionId)) {
       sessions.set(sessionId, {});
     }
     const session = sessions.get(sessionId);
-    
+
     // Only update the current song if it's different
     if (!session.currentSong || session.currentSong.name !== song.name) {
       // Ensure proper URL format for current song
@@ -735,7 +686,7 @@ io.on('connection', (socket) => {
       session.currentTime = currentTime;
       session.isPlaying = isPlaying;
       session.lastUpdate = Date.now();
-      
+
       // Broadcast to all clients in the session
       io.to(sessionId).emit('song-update', {
         song: session.currentSong,
@@ -760,7 +711,7 @@ io.on('connection', (socket) => {
       session.currentTime = currentTime;
       session.isPlaying = isPlaying;
       session.lastUpdate = Date.now();
-      
+
       io.to(sessionId).emit('song-update', {
         song: session.currentSong,
         currentTime,
@@ -777,7 +728,7 @@ io.on('connection', (socket) => {
   socket.on('play-pause', async (data) => {
     const { sessionId, isPlaying, currentTime, timestamp } = data;
     const session = sessions.get(sessionId);
-    
+
     if (session) {
       // Update session state
       session.isPlaying = isPlaying;
@@ -804,39 +755,39 @@ io.on('connection', (socket) => {
   });
 
   // Update this in your server.js socket handler
-socket.on('seek', (data) => {
-  const { sessionId, currentTime, isPlaying, timestamp } = data;
-  const session = sessions.get(sessionId);
-  
-  if (session) {
-    session.currentTime = currentTime;
-    session.isPlaying = isPlaying; // Make sure to update the isPlaying state
-    session.lastUpdate = Date.now();
-    
-    // Broadcast to all clients in the session
-    io.to(sessionId).emit('song-update', {
-      currentTime,
-      isPlaying,
-      timestamp: Date.now(),
-      song: session.currentSong
-    });
-  }
-});
+  socket.on('seek', (data) => {
+    const { sessionId, currentTime, isPlaying, timestamp } = data;
+    const session = sessions.get(sessionId);
+
+    if (session) {
+      session.currentTime = currentTime;
+      session.isPlaying = isPlaying; // Make sure to update the isPlaying state
+      session.lastUpdate = Date.now();
+
+      // Broadcast to all clients in the session
+      io.to(sessionId).emit('song-update', {
+        currentTime,
+        isPlaying,
+        timestamp: Date.now(),
+        song: session.currentSong
+      });
+    }
+  });
 
   socket.on('remove-song', (data) => {
     const { sessionId, songName } = data;
     const session = sessions.get(sessionId);
-    
+
     if (session) {
       // Remove the song from the session's songs array
       session.songs = session.songs.filter(song => song.name !== songName);
-      
+
       // If the removed song was the current song, clear the current song state
       if (session.currentSong && session.currentSong.name === songName) {
         session.currentSong = null;
         session.currentTime = 0;
         session.isPlaying = false;
-        
+
         // Broadcast the song state update
         io.to(sessionId).emit('song-update', {
           song: null,
@@ -845,7 +796,7 @@ socket.on('seek', (data) => {
           timestamp: Date.now()
         });
       }
-      
+
       // Broadcast the updated songs list to all clients in the session
       io.to(sessionId).emit('songs-updated', session.songs);
     }
@@ -855,17 +806,17 @@ socket.on('seek', (data) => {
   socket.on('reorder-songs', async (data) => {
     const { sessionId, songs } = data;
     const session = sessions.get(sessionId);
-    
+
     if (session) {
       // Update the session's song list with the new order
       session.songs = songs;
-      
+
       // Update MongoDB
       await updateSessionInMongoDB(sessionId, {
         songs,
         lastUpdate: Date.now()
       });
-      
+
       // Broadcast the updated song list
       io.to(sessionId).emit('songs-updated', session.songs);
     }
@@ -874,13 +825,13 @@ socket.on('seek', (data) => {
   socket.on('next-song', async (data) => {
     const { sessionId, song, timestamp } = data;
     const session = sessions.get(sessionId);
-    
+
     if (session) {
       session.currentSong = song;
       session.currentTime = 0;
       session.isPlaying = true;
       session.lastUpdate = timestamp;
-      
+
       // Update MongoDB
       await updateSessionInMongoDB(sessionId, {
         currentSong: song,
@@ -888,7 +839,7 @@ socket.on('seek', (data) => {
         isPlaying: true,
         lastUpdate: timestamp
       });
-      
+
       // Broadcast to all clients
       io.to(sessionId).emit('next-song', {
         song,
@@ -902,13 +853,13 @@ socket.on('seek', (data) => {
   socket.on('previous-song', async (data) => {
     const { sessionId, song, timestamp } = data;
     const session = sessions.get(sessionId);
-    
+
     if (session) {
       session.currentSong = song;
       session.currentTime = 0;
       session.isPlaying = true;
       session.lastUpdate = timestamp;
-      
+
       // Update MongoDB
       await updateSessionInMongoDB(sessionId, {
         currentSong: song,
@@ -916,7 +867,7 @@ socket.on('seek', (data) => {
         isPlaying: true,
         lastUpdate: timestamp
       });
-      
+
       // Broadcast to all clients
       io.to(sessionId).emit('previous-song', {
         song,
@@ -931,15 +882,15 @@ socket.on('seek', (data) => {
   socket.on('new-poll', async (data) => {
     const { sessionId, poll } = data;
     const session = sessions.get(sessionId);
-    
+
     if (session) {
       session.polls.push(poll);
-      
+
       // Update MongoDB
       await updateSessionInMongoDB(sessionId, {
         polls: [...(session.polls || []), poll]
       });
-      
+
       // Broadcast poll to all clients
       io.to(sessionId).emit('new-poll', {
         type: 'poll',
@@ -954,12 +905,12 @@ socket.on('seek', (data) => {
   socket.on('poll-vote', async (data) => {
     const { sessionId, pollId, optionIndex, voter } = data;
     const session = sessions.get(sessionId);
-    
+
     if (session) {
       const poll = session.polls.find(p => p.id === pollId);
       if (poll) {
         const option = poll.options[optionIndex];
-        
+
         // Toggle vote
         if (option.voters.includes(voter)) {
           option.voters = option.voters.filter(v => v !== voter);
@@ -967,12 +918,12 @@ socket.on('seek', (data) => {
           option.voters.push(voter);
         }
         option.votes = option.voters.length;
-        
+
         // Update MongoDB
         await updateSessionInMongoDB(sessionId, {
           polls: session.polls
         });
-        
+
         // Broadcast vote update
         io.to(sessionId).emit('poll-vote', {
           pollId,
@@ -988,20 +939,20 @@ socket.on('seek', (data) => {
   socket.on('delete-poll', async (data) => {
     const { sessionId, pollId } = data;
     const session = sessions.get(sessionId);
-    
+
     if (session) {
       // Remove poll from session
       session.polls = session.polls.filter(p => p.id !== pollId);
-      session.messages = session.messages.filter(msg => 
+      session.messages = session.messages.filter(msg =>
         msg.type !== 'poll' || msg.poll.id !== pollId
       );
-      
+
       // Update MongoDB
       await updateSessionInMongoDB(sessionId, {
         polls: session.polls,
         messages: session.messages
       });
-      
+
       // Broadcast poll deletion
       io.to(sessionId).emit('poll-deleted', {
         pollId,
@@ -1014,17 +965,17 @@ socket.on('seek', (data) => {
   socket.on('user-leave-session', async (data) => {
     const { sessionId, userId } = data;
     console.log(`User ${userId} is leaving session ${sessionId}`);
-    
+
     const participants = sessionParticipants.get(sessionId);
-    
+
     if (participants) {
       participants.delete(userId);
       userSessions.delete(userId);
       participantNames.delete(userId); // Clean up username
-      
+
       const currentCount = updateParticipantCount(sessionId);
-      
-      io.to(sessionId).emit('user-left', { 
+
+      io.to(sessionId).emit('user-left', {
         userId,
         participantCount: currentCount
       });
@@ -1074,19 +1025,19 @@ socket.on('seek', (data) => {
   // Add handler for buffer state updates
   socket.on('buffer-state', (data) => {
     const { sessionId, bufferProgress, isBuffering } = data;
-    
+
     if (!clientBuffers.has(sessionId)) {
       clientBuffers.set(sessionId, new Map());
     }
-    
+
     const sessionBuffers = clientBuffers.get(sessionId);
     sessionBuffers.set(socket.id, { bufferProgress, isBuffering });
-    
+
     // Broadcast buffer state to all clients in session
     const bufferValues = Array.from(sessionBuffers.values());
     const avgBufferProgress = bufferValues.reduce((sum, state) => sum + state.bufferProgress, 0) / bufferValues.length;
     const anyBuffering = bufferValues.some(state => state.isBuffering);
-    
+
     io.to(sessionId).emit('buffer-update', {
       avgBufferProgress,
       anyBuffering,
@@ -1096,23 +1047,23 @@ socket.on('seek', (data) => {
 
   socket.on('disconnect', async () => {
     console.log('Client disconnected:', socket.id);
-    
+
     // Find which session and user this socket belonged to
     const userEntry = Array.from(userSessions.entries())
       .find(([_, data]) => data.socketId === socket.id);
-    
+
     if (userEntry) {
       const [userId, { sessionId }] = userEntry;
       console.log(`Disconnected user ${userId} was in session ${sessionId}`);
-      
+
       const participants = sessionParticipants.get(sessionId);
-      
+
       if (participants) {
         // Remove the participant from memory
         participants.delete(userId);
         userSessions.delete(userId);
         participantNames.delete(userId); // Clean up username on disconnect
-        
+
         // Remove participant from MongoDB session
         try {
           await updateParticipants(sessionId, userId, false);
@@ -1126,11 +1077,11 @@ socket.on('seek', (data) => {
         } catch (error) {
           console.error('Error updating MongoDB session participants:', error);
         }
-        
+
         const currentCount = updateParticipantCount(sessionId);
-        
+
         // Notify remaining users about the user leaving
-        io.to(sessionId).emit('user-left', { 
+        io.to(sessionId).emit('user-left', {
           userId,
           participantCount: currentCount
         });
@@ -1147,7 +1098,7 @@ socket.on('seek', (data) => {
 // Start the server
 const PORT = process.env.PORT || 5000; // Change to a different port
 server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
 
 // Error handling middleware

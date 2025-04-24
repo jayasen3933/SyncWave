@@ -17,7 +17,6 @@ const Auth = ({ isLogin }) => {
   const [success, setSuccess] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-  const [agreeTerms, setAgreeTerms] = useState(false);
 
   const navigate = useNavigate();
 
@@ -40,12 +39,6 @@ const Auth = ({ isLogin }) => {
         setIsLoading(false);
         return;
       }
-
-      if (!agreeTerms) {
-        setError("You must agree to the Terms of Service and Privacy Policy");
-        setIsLoading(false);
-        return;
-      }
     }
 
     try {
@@ -53,10 +46,10 @@ const Auth = ({ isLogin }) => {
       const body = isLogin
         ? { email: formData.email, password: formData.password }
         : {
-            name: formData.username,
-            email: formData.email,
-            password: formData.password,
-          };
+          name: formData.username,
+          email: formData.email,
+          password: formData.password,
+        };
 
       const response = await fetch(
         `${process.env.REACT_APP_API_URL}/api/auth/${endpoint}`,
@@ -76,9 +69,10 @@ const Auth = ({ isLogin }) => {
         // Store the token and user data
         localStorage.setItem('user', JSON.stringify(data));
         localStorage.setItem('token', data.token);
+
         // Update auth context
         login(data);
-        
+
         setSuccess(
           isLogin ? "Login successful!" : "Account created successfully!"
         );
@@ -86,14 +80,14 @@ const Auth = ({ isLogin }) => {
         // Check if there's a redirect path saved
         const redirectPath = localStorage.getItem('redirectAfterLogin');
         localStorage.removeItem('redirectAfterLogin'); // Clear it after getting it
-        
+
         setTimeout(() => {
           navigate(redirectPath || '/home');
         }, 1500);
       } else {
         setError(
           data.message ||
-            `${isLogin ? "Login" : "Signup"} failed. Please try again.`
+          `${isLogin ? "Login" : "Signup"} failed. Please try again.`
         );
       }
     } catch (error) {
@@ -105,26 +99,28 @@ const Auth = ({ isLogin }) => {
   };
 
   // Replace the existing handleGoogleLogin function
-const handleGoogleLogin = () => {
-  // Store the return URL in localStorage
-  localStorage.setItem('returnTo', '/home');
-  
-  // Redirect to Google OAuth endpoint
-  window.location.href = `${process.env.REACT_APP_API_URL}/api/auth/google`;
-};
+  const handleGoogleLogin = () => {
+    // Store the return URL in localStorage
+    localStorage.setItem('returnTo', '/home');
+
+    // Redirect to Google OAuth endpoint
+    window.location.href = `${process.env.REACT_APP_API_URL}/api/auth/google`;
+  };
 
   return (
     <div className="auth-container">
-      {/* Updated Branding Section to match image 2 */}
+      {/* Updated Branding Section */}
       <div className="branding-section">
         {/* Updated header with logo and title in top-left */}
         <div className="branding-header">
-          <div className="logo">
-            <span className="logo-icon">♫</span>
-          </div>
-          <div className="branding-text">
-            <h1>SyncWave</h1>
-            <p className="tagline">Multi-Device Synchronized Music Player</p>
+          <div className="logo-container">
+            <div className="logo">
+              <span className="logo-icon">♫</span>
+            </div>
+            <div className="branding-text">
+              <h1>SyncWave</h1>
+              <p className="tagline">Multi-Device Synchronized Music Player</p>
+            </div>
           </div>
         </div>
 
@@ -132,7 +128,7 @@ const handleGoogleLogin = () => {
         <div className="intro-section">
           <h2>What is SyncWave?</h2>
           <p>
-            SyncWave lets you connect with friends through real-time, synchronized music — share tracks, 
+            SyncWave lets you connect with friends through real-time, synchronized music — share tracks,
             react with emojis, and enjoy virtual listening parties from anywhere in the world.
           </p>
         </div>
@@ -173,9 +169,9 @@ const handleGoogleLogin = () => {
         </div>
       </div>
 
-      {/* Login/Signup Form Section - keeping as is */}
+      {/* Login/Signup Form Section */}
       <div className="login-section mt-10">
-        <div className="login-card">
+        <div className={`login-card ${isLogin ? 'login-form' : 'signup-form'}`}>
           <div className="login-header text-center mb-4">
             <h2>{isLogin ? "Welcome Back" : "Create Account"}</h2>
             <p>
@@ -256,37 +252,20 @@ const handleGoogleLogin = () => {
             </div>
 
             {!isLogin && (
-              <>
-                <div className="form-group">
-                  <div className="password-input">
-                    <input
-                      type={showPassword ? "text" : "password"}
-                      id="confirmPassword"
-                      value={formData.confirmPassword}
-                      onChange={handleInputChange}
-                      placeholder=" "
-                      required
-                      aria-label="Confirm password"
-                    />
-                    <label htmlFor="confirmPassword">Confirm Password</label>
-                  </div>
+              <div className="form-group">
+                <div className="password-input">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    id="confirmPassword"
+                    value={formData.confirmPassword}
+                    onChange={handleInputChange}
+                    placeholder=" "
+                    required
+                    aria-label="Confirm password"
+                  />
+                  <label htmlFor="confirmPassword">Confirm Password</label>
                 </div>
-
-                <div className="terms">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={agreeTerms}
-                      onChange={(e) => setAgreeTerms(e.target.checked)}
-                      required
-                    />
-                    <span>
-                      I agree to the <Link to="/terms">Terms of Service</Link> and{" "}
-                      <Link to="/privacy">Privacy Policy</Link>
-                    </span>
-                  </label>
-                </div>
-              </>
+              </div>
             )}
 
             {isLogin && (
@@ -314,8 +293,8 @@ const handleGoogleLogin = () => {
                   ? "Signing in..."
                   : "Creating Account..."
                 : isLogin
-                ? "Sign In"
-                : "Create Account"}
+                  ? "Sign In"
+                  : "Create Account"}
             </button>
 
             <p className="switch-auth">

@@ -36,7 +36,7 @@ function Home() {
     e.preventDefault();
     if (sessionId.trim()) {
       const socket = io(API_URL);
-      
+
       socket.on('connect', () => {
         socket.emit('join-session', {
           sessionId: sessionId.trim(),
@@ -55,7 +55,7 @@ function Home() {
           navigate(`/session/${sessionId}`);
         });
       });
-      
+
       socket.on('connect_error', (err) => {
         console.error('Connection error:', err);
         setJoinError('Cannot connect to server. Please try again later.');
@@ -96,17 +96,6 @@ function Home() {
           </div>
           <h1 className="title">SyncWave</h1>
           <p className="subtitle">Music Sessions with Friends</p>
-          
-          <div className="stats">
-            <div className="stat">
-              <span className="stat-icon">👥</span>
-              <span className="stat-text">121 listeners online</span>
-            </div>
-            <div className="stat">
-              <span className="stat-icon">🎵</span>
-              <span className="stat-text">5K+ tracks</span>
-            </div>
-          </div>
         </div>
 
         <div className="actions-section">
@@ -129,7 +118,7 @@ function Home() {
           <div className="modal-content">
             <div className="modal-header">
               <h3>Create New Session</h3>
-              <button 
+              <button
                 className="close-modal-btn"
                 onClick={() => setShowCreateModal(false)}
               >
@@ -163,7 +152,7 @@ function Home() {
           <div className="modal-content">
             <div className="modal-header">
               <h3>Join Session</h3>
-              <button 
+              <button
                 className="close-modal-btn"
                 onClick={() => {
                   setShowJoinModal(false);

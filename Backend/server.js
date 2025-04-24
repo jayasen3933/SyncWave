@@ -213,10 +213,22 @@ app.use('/api/auth', authRoutes);
 app.use('/api/sessions', sessionRoutes);
 app.use('/api/songs', songRoutes);
 
-// Root route
-app.get('/', (req, res) => {
-  res.send('SyncWave API is running');
-});
+// Serve static files from the React app
+if (process.env.NODE_ENV === 'production') {
+  // Set static folder
+  const staticPath = path.resolve(__dirname, '../frontend/build');
+  app.use(express.static(staticPath));
+
+  // For any route that is not an API route, serve the React app
+  app.get('*', (req, res) => {
+    res.sendFile(path.resolve(__dirname, '../frontend/build', 'index.html'));
+  });
+} else {
+  // Root route (for development)
+  app.get('/', (req, res) => {
+    res.send('SyncWave API is running');
+  });
+}
 
 // Socket.io setup
 const io = new Server(server, {

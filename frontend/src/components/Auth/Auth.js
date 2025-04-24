@@ -128,8 +128,8 @@ const Auth = ({ isLogin }) => {
         <div className="intro-section">
           <h2>What is SyncWave?</h2>
           <p>
-            SyncWave lets you connect with friends through real-time, synchronized music — share tracks,
-            react with emojis, and enjoy virtual listening parties from anywhere in the world.
+            SyncWave lets you connect with friends through real-time, synchronized music — share tracks, chat with friends,
+            and enjoy virtual listening parties from anywhere in the world.
           </p>
         </div>
 

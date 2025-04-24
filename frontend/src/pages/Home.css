@@ -293,46 +293,55 @@ body {
   left: 75%;
   animation-delay: -5s;
 }
+
 .note-7 {
   top: 85%;
   left: 35%;
   animation-delay: -6s;
 }
+
 .note-8 {
   top: 45%;
   left: 85%;
   animation-delay: -7s;
 }
+
 .note-9 {
   top: 65%;
   left: 55%;
   animation-delay: -8s;
 }
+
 .note-10 {
   top: 85%;
   left: 5%;
   animation-delay: -9s;
 }
+
 .note-11 {
   top: 95%;
   left: 25%;
   animation-delay: -10s;
 }
+
 .note-12 {
   top: 75%;
   left: 45%;
   animation-delay: -11s;
 }
+
 .note-13 {
   top: 55%;
   left: 65%;
   animation-delay: -12s;
 }
+
 .note-14 {
   top: 35%;
   left: 85%;
   animation-delay: -13s;
 }
+
 .note-15 {
   top: 15%;
   left: 5%;
@@ -346,7 +355,8 @@ body {
   position: relative;
   z-index: 1;
   padding: 2rem;
-  margin-top: 80px; /* Added to move content down */
+  margin-top: 80px;
+  /* Added to move content down */
 }
 
 .header-section {
@@ -477,9 +487,11 @@ body {
     transform: translateY(100vh) rotate(0deg);
     opacity: 0;
   }
+
   50% {
     opacity: 0.3;
   }
+
   100% {
     transform: translateY(-100vh) rotate(360deg);
     opacity: 0;
@@ -564,21 +576,95 @@ body {
 }
 
 /* Generate positions for 15 music notes */
-.note-1 { top: 5%; left: 5%; animation-delay: 0s; }
-.note-2 { top: 15%; left: 25%; animation-delay: -1s; }
-.note-3 { top: 35%; left: 45%; animation-delay: -2s; }
-.note-4 { top: 55%; left: 65%; animation-delay: -3s; }
-.note-5 { top: 75%; left: 15%; animation-delay: -4s; }
-.note-6 { top: 25%; left: 75%; animation-delay: -5s; }
-.note-7 { top: 85%; left: 35%; animation-delay: -6s; }
-.note-8 { top: 45%; left: 85%; animation-delay: -7s; }
-.note-9 { top: 65%; left: 55%; animation-delay: -8s; }
-.note-10 { top: 85%; left: 5%; animation-delay: -9s; }
-.note-11 { top: 95%; left: 25%; animation-delay: -10s; }
-.note-12 { top: 75%; left: 45%; animation-delay: -11s; }
-.note-13 { top: 55%; left: 65%; animation-delay: -12s; }
-.note-14 { top: 35%; left: 85%; animation-delay: -13s; }
-.note-15 { top: 15%; left: 5%; animation-delay: -14s; }
+.note-1 {
+  top: 5%;
+  left: 5%;
+  animation-delay: 0s;
+}
+
+.note-2 {
+  top: 15%;
+  left: 25%;
+  animation-delay: -1s;
+}
+
+.note-3 {
+  top: 35%;
+  left: 45%;
+  animation-delay: -2s;
+}
+
+.note-4 {
+  top: 55%;
+  left: 65%;
+  animation-delay: -3s;
+}
+
+.note-5 {
+  top: 75%;
+  left: 15%;
+  animation-delay: -4s;
+}
+
+.note-6 {
+  top: 25%;
+  left: 75%;
+  animation-delay: -5s;
+}
+
+.note-7 {
+  top: 85%;
+  left: 35%;
+  animation-delay: -6s;
+}
+
+.note-8 {
+  top: 45%;
+  left: 85%;
+  animation-delay: -7s;
+}
+
+.note-9 {
+  top: 65%;
+  left: 55%;
+  animation-delay: -8s;
+}
+
+.note-10 {
+  top: 85%;
+  left: 5%;
+  animation-delay: -9s;
+}
+
+.note-11 {
+  top: 95%;
+  left: 25%;
+  animation-delay: -10s;
+}
+
+.note-12 {
+  top: 75%;
+  left: 45%;
+  animation-delay: -11s;
+}
+
+.note-13 {
+  top: 55%;
+  left: 65%;
+  animation-delay: -12s;
+}
+
+.note-14 {
+  top: 35%;
+  left: 85%;
+  animation-delay: -13s;
+}
+
+.note-15 {
+  top: 15%;
+  left: 5%;
+  animation-delay: -14s;
+}
 
 .logout-button {
   position: fixed;
@@ -614,15 +700,11 @@ body {
   top: 30px;
   left: 40px;
   font-size: 2.5rem;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: -0.03em;
-  color: white;
-  text-shadow: 0 2px 10px rgba(147, 51, 234, 0.3);
   z-index: 10;
-  background: linear-gradient(45deg, #fff, #e2e8f0);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: white;
+  text-shadow: 0 4px 12px rgba(147, 51, 234, 0.5);
   animation: fadeIn 0.8s ease-out;
 }
 
@@ -631,6 +713,7 @@ body {
     opacity: 0;
     transform: translateY(-20px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -642,20 +725,20 @@ body {
   .title {
     font-size: 3rem;
   }
-  
+
   .subtitle {
     font-size: 1.2rem;
   }
-  
+
   .stats {
     flex-direction: column;
     gap: 1rem;
   }
-  
+
   .actions-section {
     flex-direction: column;
   }
-  
+
   .btn {
     width: 100%;
   }

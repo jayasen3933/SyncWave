@@ -103,7 +103,7 @@
 }
 
 .session-page .session-header .syncwave-logo .logo-icon::after {
-  content: '🎵';
+  content: 'ðŸŽµ';
   font-size: 1.5rem;
   position: relative;
   z-index: 1;
@@ -1383,4 +1383,88 @@
   10% { opacity: 1; transform: translateY(0); }
   90% { opacity: 1; transform: translateY(0); }
   100% { opacity: 0; transform: translateY(-10px); }
+}
+
+
+
+.buffer-progress {
+  height: 3px;
+  background-color: rgba(255, 255, 255, 0.1);
+  margin: 5px 0;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.buffer-bar {
+  height: 100%;
+  background-color: rgba(255, 255, 255, 0.3);
+  transition: width 0.3s ease;
+}
+
+
+.sync-btn {
+  background-color: rgba(255, 255, 255, 0.2);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  margin-left: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sync-btn:hover {
+  background-color: rgba(255, 255, 255, 0.3);
+  transform: scale(1.05);
+}
+
+.sync-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sync-btn:active {
+  transform: scale(0.95);
+}
+
+/* Optional: Add a rotation animation when syncing */
+.syncing {
+  animation: rotate 1s linear infinite;
+}
+
+@keyframes rotate {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+.buffering-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 5px;
+}
+
+.buffering-indicator {
+  color: orange;
+  margin-left: 10px;
+  animation: pulse 1.5s infinite;
+}
+
+.ready-count {
+  font-size: 0.9em;
+  color: #aaa;
+  margin-top: 4px;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.6; }
+  50% { opacity: 1; }
+  100% { opacity: 0.6; }
 }

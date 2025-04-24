@@ -236,6 +236,10 @@ const participantNames = new Map(); // Add map to track participant names
 const readyStates = new Map(); // Track ready state of participants
 const syncTimeouts = new Map(); // Track sync timeouts
 
+// Add new state management for buffer sync
+const clientBuffers = new Map(); // Track buffer progress for each client
+const clientSyncStates = new Map(); // Track sync state for each client
+
 // Session cleanup delay (5 minutes)
 const SESSION_CLEANUP_DELAY = 5 * 60 * 1000;
 
@@ -528,7 +532,6 @@ io.on('connection', (socket) => {
 
   // Add handler for sync request
   socket.on('request-sync', (data) => {
-    // Find sessionId - we should get it from data rather than socket.rooms
     const sessionId = data.sessionId || Array.from(socket.rooms)[1];
     const session = sessions.get(sessionId);
     if (session) {
@@ -537,14 +540,43 @@ io.on('connection', (socket) => {
         currentTime: session.currentTime,
         serverTime: Date.now(),
         clientTime: data.clientTime,
-        syncId: data.syncId
+        syncId: Date.now()
       });
     }
   });
-
+  socket.on('prepare-song', (data) => {
+    const { sessionId, song } = data;
+    const session = sessions.get(sessionId);
+    
+    if (session) {
+      // Get participants from the sessionParticipants Map
+      const participants = sessionParticipants.get(sessionId) || new Set();
+      const participantCount = participants.size;
+      
+      // Reset ready counters
+      session.readyCount = 0;
+      session.players = participantCount;  // Use participantCount instead
+      session.preparingSong = song;
+      
+      // Notify all clients to start buffering the song
+      io.to(sessionId).emit('prepare-playback', {
+        song,
+        currentTime: 0,
+        timestamp: Date.now(),
+      });
+      
+      // Also send ready state update
+      io.to(sessionId).emit('ready-state-update', {
+        readyCount: 0,
+        totalCount: participantCount  // Use participantCount instead
+      });
+      
+      console.log(`Preparing song "${song.name}" for ${participantCount} participants in session ${sessionId}`);
+    }
+  });
   // Handle ready state changes
   socket.on('player-ready', async (data) => {
-    const { sessionId, userId, timestamp } = data;
+    const { sessionId, userId, song, timestamp } = data;
     const session = sessions.get(sessionId);
     
     if (session) {
@@ -554,15 +586,25 @@ io.on('connection', (socket) => {
       }
       
       const sessionReadyStates = readyStates.get(sessionId);
-      sessionReadyStates.set(userId, { ready: true, timestamp });
+      sessionReadyStates.set(userId, { ready: true, timestamp, song });
       
-      // Check if all participants are ready
+      // Get participants
       const participants = sessionParticipants.get(sessionId);
-      const allReady = Array.from(participants).every(
-        participantId => sessionReadyStates.get(participantId)?.ready
-      );
+      const participantCount = participants.size;
+      const readyCount = sessionReadyStates.size;
       
-      if (allReady) {
+      console.log(`Session ${sessionId}: ${readyCount}/${participantCount} players ready`);
+      
+      // Check if either all participants are ready OR a threshold percentage (e.g., 75%)
+      // AND at least 3 seconds have passed since the first ready signal
+      const readyPercentage = readyCount / participantCount;
+      const firstReadyTime = Math.min(...Array.from(sessionReadyStates.values()).map(v => v.timestamp));
+      const timeElapsed = Date.now() - firstReadyTime;
+      
+      const allReady = readyCount === participantCount;
+      const sufficientReadiness = readyPercentage >= 1 && timeElapsed > 3000 ;
+      
+      if (allReady || sufficientReadiness) {
         // Calculate sync start time (2 seconds from now)
         const syncStartTime = Date.now() + 2000;
         
@@ -573,11 +615,21 @@ io.on('connection', (socket) => {
         
         // Set timeout to start playback
         const timeoutId = setTimeout(() => {
+          // Set the current song from the prepare-song event
+          if (session.preparingSong) {
+            session.currentSong = session.preparingSong;
+            session.currentTime = 0;
+            session.isPlaying = true;
+            session.lastUpdate = Date.now();
+          }
+          
           io.to(sessionId).emit('start-sync-playback', {
             timestamp: syncStartTime,
-            currentTime: session.currentTime,
-            isPlaying: session.isPlaying
+            currentTime: 0,
+            isPlaying: true,
+            song: session.preparingSong || session.currentSong
           });
+          
           // Reset ready states after sync
           sessionReadyStates.clear();
         }, 2000);
@@ -588,14 +640,14 @@ io.on('connection', (socket) => {
         io.to(sessionId).emit('sync-countdown', {
           startTime: syncStartTime
         });
+        
+        console.log(`Starting playback in session ${sessionId} at ${new Date(syncStartTime).toISOString()}`);
       }
       
       // Notify all clients about ready state update
       io.to(sessionId).emit('ready-state-update', {
-        userId,
-        ready: true,
-        readyCount: sessionReadyStates.size,
-        totalCount: participants.size
+        readyCount: readyCount,
+        totalCount: participantCount
       });
     }
   });
@@ -751,28 +803,25 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('seek', async (data) => {
-    const { sessionId, currentTime } = data;
-    const session = sessions.get(sessionId);
-    if (session) {
-      session.currentTime = currentTime;
-      session.lastUpdate = Date.now();
-
-      // Update MongoDB
-      await updateSessionInMongoDB(sessionId, {
-        currentTime,
-        lastUpdate: Date.now()
-      });
-      
-      // Broadcast to all clients
-      io.to(sessionId).emit('song-update', {
-        song: session.currentSong,
-        currentTime: session.currentTime,
-        isPlaying: session.isPlaying,
-        timestamp: Date.now()
-      });
-    }
-  });
+  // Update this in your server.js socket handler
+socket.on('seek', (data) => {
+  const { sessionId, currentTime, isPlaying, timestamp } = data;
+  const session = sessions.get(sessionId);
+  
+  if (session) {
+    session.currentTime = currentTime;
+    session.isPlaying = isPlaying; // Make sure to update the isPlaying state
+    session.lastUpdate = Date.now();
+    
+    // Broadcast to all clients in the session
+    io.to(sessionId).emit('song-update', {
+      currentTime,
+      isPlaying,
+      timestamp: Date.now(),
+      song: session.currentSong
+    });
+  }
+});
 
   socket.on('remove-song', (data) => {
     const { sessionId, songName } = data;
@@ -982,6 +1031,69 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Add handler for sync check
+  socket.on('sync-check', (data) => {
+    const { sessionId, clientTime, bufferProgress, isBuffering } = data;
+    const session = sessions.get(sessionId);
+
+    if (session) {
+      // Store client's buffer progress
+      if (!clientBuffers.has(sessionId)) {
+        clientBuffers.set(sessionId, new Map());
+      }
+      const sessionBuffers = clientBuffers.get(sessionId);
+      sessionBuffers.set(socket.id, { bufferProgress, isBuffering });
+
+      // Calculate average buffer progress
+      const bufferValues = Array.from(sessionBuffers.values());
+      const avgBufferProgress = bufferValues.reduce((sum, state) => sum + state.bufferProgress, 0) / bufferValues.length;
+
+      // If any client is buffering, pause others
+      const anyBuffering = bufferValues.some(state => state.isBuffering);
+
+      // Calculate the current playback time
+      let adjustedCurrentTime = session.currentTime;
+      if (session.isPlaying) {
+        const elapsedTime = (Date.now() - session.lastUpdate) / 1000; // Time elapsed in seconds
+        adjustedCurrentTime += elapsedTime;
+      }
+
+      // Send sync response
+      socket.emit('sync-response', {
+        currentTime: adjustedCurrentTime, // Adjusted playback time
+        serverTime: Date.now(), // Server's current timestamp
+        clientTime, // Client's original timestamp
+        avgBufferProgress, // Average buffer progress
+        shouldPause: anyBuffering, // Whether playback should pause
+        isPlaying: session.isPlaying, // Playback state
+        syncId: Date.now() // Unique sync ID
+      });
+    }
+  });
+
+  // Add handler for buffer state updates
+  socket.on('buffer-state', (data) => {
+    const { sessionId, bufferProgress, isBuffering } = data;
+    
+    if (!clientBuffers.has(sessionId)) {
+      clientBuffers.set(sessionId, new Map());
+    }
+    
+    const sessionBuffers = clientBuffers.get(sessionId);
+    sessionBuffers.set(socket.id, { bufferProgress, isBuffering });
+    
+    // Broadcast buffer state to all clients in session
+    const bufferValues = Array.from(sessionBuffers.values());
+    const avgBufferProgress = bufferValues.reduce((sum, state) => sum + state.bufferProgress, 0) / bufferValues.length;
+    const anyBuffering = bufferValues.some(state => state.isBuffering);
+    
+    io.to(sessionId).emit('buffer-update', {
+      avgBufferProgress,
+      anyBuffering,
+      timestamp: Date.now()
+    });
+  });
+
   socket.on('disconnect', async () => {
     console.log('Client disconnected:', socket.id);
     
@@ -1024,13 +1136,18 @@ io.on('connection', (socket) => {
         });
       }
     }
+
+    // Clean up buffer tracking for this socket
+    clientBuffers.forEach((sessionBuffers) => {
+      sessionBuffers.delete(socket.id);
+    });
   });
 });
 
 // Start the server
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5000; // Change to a different port
 server.listen(PORT, () => {
-  console.log(`SyncWave server running at http://localhost:${PORT} [${new Date()}]`);
+    console.log(`Server running on port ${PORT}`);
 });
 
 // Error handling middleware

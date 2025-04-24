@@ -12,7 +12,8 @@ import {
   faBackward,
   faPoll,
   faPaperPlane,
-  faShare
+  faShare,
+  faSync
 } from '@fortawesome/free-solid-svg-icons';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
@@ -52,6 +53,13 @@ function Session() {
   const isSeekingRef = useRef(false);
   const [showCopyMessage, setShowCopyMessage] = useState(false);
   const [uploadStatus, setUploadStatus] = useState({});
+  const [bufferProgress, setBufferProgress] = useState(0);
+  const [isBuffering, setIsBuffering] = useState(false);
+  const [syncInterval, setSyncInterval] = useState(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const MIN_BUFFER_PERCENTAGE = 0.2; // Minimum buffer percentage before starting playback
+  const SYNC_CHECK_INTERVAL = 5000; // Check sync every 5 seconds
+  const SYNC_THRESHOLD = 0.05; // Allowable drift in seconds
 
   const handleSessionCreated = (data) => {
     console.log('Session created:', data);
@@ -153,6 +161,7 @@ function Session() {
       });
     }
 
+    // Emit next-song event instead of sync-playback
     socketRef.current.emit('next-song', {
       sessionId,
       song: nextSong,
@@ -238,18 +247,24 @@ function Session() {
       setCurrentTime(newTime);
 
       if (isPlaying) {
-        audioRef.current.play().catch(error => {
+        audioRef.current.play().catch((error) => {
           console.error('Playback failed after seek:', error);
           setIsPlaying(false);
         });
       }
 
-      socketRef.current.emit('seek', {
-        sessionId,
-        currentTime: newTime,
-        timestamp: Date.now(),
-        isPlaying: isPlaying
-      });
+      // Debounce the seek event
+      if (seekTimeoutRef.current) {
+        clearTimeout(seekTimeoutRef.current);
+      }
+      seekTimeoutRef.current = setTimeout(() => {
+        socketRef.current.emit('seek', {
+          sessionId,
+          currentTime: newTime,
+          timestamp: Date.now(),
+          isPlaying: isPlaying,
+        });
+      }, 300); // Delay of 300ms
     },
     [sessionId, duration, isPlaying]
   );
@@ -350,36 +365,34 @@ function Session() {
     isLocalUpdate.current = false;
   };
   
-  const handleSyncPlayback = (data) => {
+  const handleSyncPlayback = useCallback((data) => {
     if (audioRef.current) {
       const clientTime = Date.now();
       const latency = (clientTime - data.clientTime) / 1000;
       const serverTimeDiff = (clientTime - data.serverTime) / 1000;
       const adjustedTime = data.currentTime + latency + serverTimeDiff;
-  
+
       audioRef.current.pause();
-  
+
       if (adjustedTime < audioRef.current.duration) {
         audioRef.current.currentTime = adjustedTime;
       } else {
         audioRef.current.currentTime = 0;
       }
-  
+
       if (data.isPlaying) {
-        socketRef.current.emit('request-sync', {
-          sessionId,
-          syncId: data.syncId,
-          clientTime: Date.now(),
-        });
-  
         setTimeout(() => {
           audioRef.current.play().catch((error) => {
             console.log('Playback failed:', error);
           });
         }, 20);
       }
+
+      setCurrentSong(data.song);
+      setCurrentTime(adjustedTime);
+      setIsPlaying(data.isPlaying);
     }
-  };
+  }, []);
   
   const handleSyncResponse = (data) => {
     if (audioRef.current) {
@@ -387,15 +400,31 @@ function Session() {
       const latency = (clientTime - data.clientTime) / 1000;
       const serverTimeDiff = (clientTime - data.serverTime) / 1000;
       const adjustedTime = data.currentTime + latency + serverTimeDiff;
-  
-      if (adjustedTime < audioRef.current.duration) {
+
+      const drift = Math.abs(audioRef.current.currentTime - adjustedTime);
+      console.log('Current Time:', audioRef.current.currentTime);
+      console.log('Adjusted Time:', adjustedTime);
+      console.log('Drift:', drift);
+
+      // Force sync if drift exceeds the threshold
+      if (drift > SYNC_THRESHOLD) {
+        console.log('Drift detected. Adjusting playback...');
         audioRef.current.currentTime = adjustedTime;
+
+        if (data.isPlaying) {
+          audioRef.current.play().catch((error) => {
+            console.error('Playback failed during sync:', error);
+            setIsPlaying(false);
+          });
+        } else {
+          audioRef.current.pause();
+        }
       }
     }
   };
   
-  const handlePreparePlayback = (data) => {
-    setIsReady(false);
+  const handlePreparePlayback = useCallback((data) => {
+    setIsReady(false); // Disable controls during preparation
     if (audioRef.current) {
       audioRef.current.currentTime = data.currentTime;
       setCurrentTime(data.currentTime);
@@ -405,16 +434,16 @@ function Session() {
       userId: user._id,
       timestamp: tsRef.current.now(),
     });
-  };
+  }, [sessionId, user]);
   
   const handleStartSyncPlayback = (data) => {
     if (audioRef.current) {
       const now = tsRef.current.now();
       const timeUntilStart = data.timestamp - now;
-  
+
       audioRef.current.currentTime = data.currentTime;
       setCurrentTime(data.currentTime);
-  
+
       if (timeUntilStart > 0) {
         setTimeout(() => {
           if (data.isPlaying) {
@@ -428,7 +457,7 @@ function Session() {
       }
     }
     setCountdownTime(null);
-    setIsReady(true);
+    setIsReady(true); // Re-enable controls after sync
   };
 
   const handleShareClick = () => {
@@ -559,8 +588,14 @@ function Session() {
       'volume-change': handleVolumeChange,
       'song-added': handleSongAdded,
       'song-removed': handleSongRemoved,
-      'sync-playback': handleSyncPlayback,
-      'sync-response': handleSyncResponse,
+      'sync-playback': (data) => {
+        console.log('Sync playback event received:', data);
+        handleSyncPlayback(data);
+      },
+      'sync-response': (data) => {
+        console.log('Received sync-response:', data);
+        handleSyncResponse(data);
+      },
       'prepare-playback': handlePreparePlayback,
       'ready-state-update': (data) => {
         setReadyCount(data.readyCount);
@@ -594,7 +629,7 @@ function Session() {
         tsRef.current.destroy();
       }
     };
-  }, [sessionId, user, searchParams, navigate]); // Only dependencies that don't change during normal operation
+  }, [sessionId, user, searchParams, navigate, handlePreparePlayback, handleSyncPlayback]); // Only dependencies that don't change during normal operation
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -659,6 +694,82 @@ function Session() {
       };
     }
   }, [isPlaying]);
+
+  // Add buffer progress tracking
+  useEffect(() => {
+    if (audioRef.current) {
+      const audio = audioRef.current;
+      
+      const handleProgress = () => {
+        if (audio.buffered.length > 0) {
+          const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
+          const bufferPercentage = bufferedEnd / audio.duration;
+          setBufferProgress(bufferPercentage);
+          
+          // Start playback if enough buffer is loaded
+          if (bufferPercentage >= MIN_BUFFER_PERCENTAGE && isPlaying && !audio.playing) {
+            audio.play().catch(error => {
+              console.error('Playback failed:', error);
+              setIsPlaying(false);
+            });
+          }
+        }
+      };
+
+      const handleWaiting = () => {
+        setIsBuffering(true);
+      };
+
+      const handlePlaying = () => {
+        setIsBuffering(false);
+      };
+
+      audio.addEventListener('progress', handleProgress);
+      audio.addEventListener('waiting', handleWaiting);
+      audio.addEventListener('playing', handlePlaying);
+
+      return () => {
+        audio.removeEventListener('progress', handleProgress);
+        audio.removeEventListener('waiting', handleWaiting);
+        audio.removeEventListener('playing', handlePlaying);
+      };
+    }
+  }, [isPlaying]);
+
+  // Add periodic sync checks
+  useEffect(() => {
+    if (isPlaying && currentSong) {
+      const interval = setInterval(() => {
+        if (audioRef.current) {
+          const currentTime = audioRef.current.currentTime;
+          const clientTime = Date.now();
+
+          console.log('Emitting sync-check:', {
+            sessionId,
+            currentTime,
+            clientTime,
+            bufferProgress,
+            isBuffering,
+          });
+
+          socketRef.current.emit('sync-check', {
+            sessionId,
+            currentTime,
+            clientTime,
+            bufferProgress,
+            isBuffering,
+          });
+        }
+      }, SYNC_CHECK_INTERVAL);
+
+      setSyncInterval(interval);
+
+      return () => {
+        clearInterval(interval);
+        setSyncInterval(null);
+      };
+    }
+  }, [isPlaying, currentSong, sessionId, bufferProgress, isBuffering]);
 
   const handleFileUpload = async (event) => {
     const files = event.target.files;
@@ -803,41 +914,52 @@ function Session() {
   const playSong = (song) => {
     if (!audioRef.current) return;
 
-    isLocalUpdate.current = true;
-    lastUpdateTimeRef.current = Date.now();
-
-    setCurrentSong(song);
-    setCurrentTime(0);
-    setIsPlaying(true);
-
-    audioRef.current.src = song.url;
-    audioRef.current.load();
-    audioRef.current.currentTime = 0;
-
-    const playAudio = async () => {
-      if (audioRef.current) {
-        try {
-          await audioRef.current.play();
-        } catch (error) {
-          console.error('Playback failed:', error);
-          setIsPlaying(false);
-        }
-      }
-    };
-
-    audioRef.current.oncanplay = playAudio;
-    audioRef.current.onerror = () => {
-      console.error('Error loading audio');
-      setIsPlaying(false);
-    };
-
-    socketRef.current.emit('play-song', {
+    // Emit a prepare-song event first instead of immediately playing
+    socketRef.current.emit('prepare-song', {
       sessionId,
       song,
-      currentTime: 0,
-      isPlaying: true,
       timestamp: Date.now(),
     });
+    
+    // The actual playback will be managed by the server after everyone is ready
+    // Local UI updates to show buffering state
+    setCurrentSong(song);
+    setIsPlaying(false);
+    setIsBuffering(true);
+    setIsReady(false); // Disable controls during preparation
+    
+    // Load song but don't play yet
+    const streamingUrl = `${API_URL}/api/songs/${song._id}/stream`;
+    audioRef.current.src = streamingUrl;
+    audioRef.current.preload = 'auto';
+    
+    audioRef.current.onloadedmetadata = () => {
+      setDuration(audioRef.current.duration);
+    };
+
+    // When enough is buffered, tell the server we're ready
+    audioRef.current.oncanplay = () => {
+      if (bufferProgress >= MIN_BUFFER_PERCENTAGE) {
+        socketRef.current.emit('player-ready', {
+          sessionId,
+          userId: user._id,
+          song: song,
+          timestamp: tsRef.current.now(),
+        });
+      }
+    };
+    
+    audioRef.current.onerror = () => {
+      console.error('Error loading audio');
+      setIsBuffering(false);
+      setIsReady(true); // Re-enable controls
+      socketRef.current.emit('player-error', {
+        sessionId,
+        userId: user._id,
+        song: song,
+        timestamp: Date.now(),
+      });
+    };
   };
 
   const handleTimeUpdate = () => {
@@ -1091,6 +1213,25 @@ function Session() {
     }
   };
 
+  const requestSyncPlayback = useCallback(() => {
+    if (audioRef.current && currentSong) {
+      setIsSyncing(true);
+      console.log('Manually requesting sync playback');
+      socketRef.current.emit('sync-playback', {
+        sessionId,
+        currentTime: audioRef.current.currentTime,
+        isPlaying: isPlaying,
+        song: currentSong,
+        clientTime: Date.now(),
+      });
+      
+      // Reset syncing state after animation
+      setTimeout(() => {
+        setIsSyncing(false);
+      }, 1000);
+    }
+  }, [sessionId, isPlaying, currentSong]);
+
   return (
     <div className="session-page">
       <div className="session-container">
@@ -1327,7 +1468,23 @@ function Session() {
           <div className="player-controls-wrapper">
             <div className="current-song-title">
               {currentSong ? currentSong.name : 'No song playing'}
+              {isBuffering && !countdownTime && (
+                <div className="buffering-status">
+                  <span className="buffering-indicator">Buffering...</span>
+                  {!isReady && readyCount > 0 && (
+                    <span className="ready-count">{readyCount}/{totalCount} ready</span>
+                  )}
+                </div>
+              )}
             </div>
+            
+            <div className="buffer-progress">
+              <div 
+                className="buffer-bar" 
+                style={{ width: `${bufferProgress * 100}%` }}
+              />
+            </div>
+            
             <div
               className="progress-container"
               onClick={handleSeek}
@@ -1338,6 +1495,7 @@ function Session() {
                 style={{ width: `${(currentTime / duration) * 100}%` }}
               />
             </div>
+            
             <div className="time-display">
               <span>{formatTime(currentTime)}</span>
               <span>{formatTime(duration)}</span>
@@ -1354,32 +1512,41 @@ function Session() {
               <button
                 className="control-btn"
                 onClick={handlePreviousSong}
-                disabled={!currentSong}
+                disabled={!currentSong || !isReady}
               >
                 <FontAwesomeIcon icon={faBackward} />
               </button>
               <button
                 className="play-pause-btn"
                 onClick={handlePlayPause}
-                disabled={!currentSong}
+                disabled={!currentSong || !isReady}
               >
                 <FontAwesomeIcon icon={isPlaying ? faPause : faPlay} />
               </button>
               <button
                 className="control-btn"
                 onClick={handleNextSong}
-                disabled={!currentSong}
+                disabled={!currentSong || !isReady}
               >
                 <FontAwesomeIcon icon={faForward} />
+              </button>
+              <button
+                className={`sync-btn ${isSyncing ? 'syncing' : ''}`}
+                onClick={requestSyncPlayback}
+                disabled={!currentSong}
+                title="Sync playback with other participants"
+              >
+                <FontAwesomeIcon icon={faSync} />
               </button>
             </div>
           </div>
         </div>
 
+        {/* Overlay for countdown and syncing */}
         {countdownTime && (
           <div className="sync-overlay">
             <div className="sync-status">
-              <div>Synchronizing playback...</div>
+              <div>Preparing to play</div>
               <div>
                 Ready: {readyCount}/{totalCount}
               </div>
@@ -1388,8 +1555,7 @@ function Session() {
                 {Math.max(
                   0,
                   Math.floor((countdownTime - (tsRef.current?.now() || Date.now())) / 1000)
-                )}
-                s
+                )}s
               </div>
             </div>
           </div>

@@ -16,7 +16,7 @@ Before starting, ensure you have the following installed:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/deekshith1707/syncwave.git
+git clone https://github.com/jayasen3933/SyncWave.git
 cd syncwave
 ```
 

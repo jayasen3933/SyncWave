@@ -3,3 +3,5 @@ config/firebase.js
 secrets/
 firebase-service-account.json
 uploads/
+
+node_modules/

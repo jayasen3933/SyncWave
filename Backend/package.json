@@ -4,7 +4,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js",
+    "dev": "nodemon --ignore uploads/ server.js",
     "deploy": "node deploy-setup.js && node server.js",
     "build": "node deploy-setup.js"
   },
@@ -27,6 +27,7 @@
     "mongoose": "^8.13.2",
     "multer": "^1.4.5-lts.2",
     "nanoid": "^5.1.5",
+    "nodemailer": "^6.9.16",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "passport-local": "^1.0.0",

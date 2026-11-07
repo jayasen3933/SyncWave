@@ -1,49 +1,46 @@
 // src/pages/AuthRedirect.js
-import { useEffect } from 'react';
+// Landing page for the Google OAuth callback: /auth/redirect?token=...
+import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getCurrentUser } from '../services/authServices';
+import { getCurrentUser, clearAuth } from '../services/authServices';
 
 const AuthRedirect = () => {
   const navigate = useNavigate();
   const { login } = useAuth();
+  const handled = useRef(false);
 
   useEffect(() => {
-    const handleAuth = async () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      const token = urlParams.get('token');
-      console.log('Received token:', token ? 'Token exists' : 'No token');
+    if (handled.current) return;
+    handled.current = true;
 
-      if (token) {
-        try {
-          localStorage.setItem('token', token);
-          console.log('Token stored in localStorage');
-          
-          const userData = await getCurrentUser();
-          console.log('User data fetched:', userData ? 'Success' : 'Failed');
-          
-          if (userData) {
-            console.log('Logging in user and redirecting to home');
-            await login(userData);
-            navigate('/home');
-          } else {
-            console.error('Failed to get user data');
-            navigate('/auth');
-          }
-        } catch (error) {
-          console.error('Auth error:', error);
-          navigate('/auth');
-        }
+    const token = new URLSearchParams(window.location.search).get('token');
+    if (!token) {
+      navigate('/auth/login?error=google_failed', { replace: true });
+      return;
+    }
+
+    (async () => {
+      localStorage.setItem('token', token);
+      const userData = await getCurrentUser();
+      if (userData) {
+        login({ ...userData, token });
+        const redirectPath = localStorage.getItem('redirectAfterLogin');
+        localStorage.removeItem('redirectAfterLogin');
+        navigate(redirectPath || '/home', { replace: true });
       } else {
-        console.log('No token found, redirecting to auth');
-        navigate('/auth');
+        clearAuth();
+        navigate('/auth/login?error=google_failed', { replace: true });
       }
-    };
-
-    handleAuth();
+    })();
   }, [navigate, login]);
 
-  return <div>Authenticating...</div>;
+  return (
+    <div className="app-loading">
+      <div className="app-spinner" />
+      <p>Signing you in...</p>
+    </div>
+  );
 };
 
 export default AuthRedirect;

@@ -52,6 +52,10 @@ const SessionSchema = new mongoose.Schema({
     type: Number,
     default: () => Date.now()
   },
+  polls: {
+    type: [mongoose.Schema.Types.Mixed],
+    default: []
+  },
   messages: [{
     text: String,
     timestamp: Date,
@@ -88,9 +92,6 @@ const SessionSchema = new mongoose.Schema({
     default: Date.now
   }
 });
-
-// Add index on sessionId for faster lookups
-SessionSchema.index({ sessionId: 1 });
 
 // Add index on lastUpdate to help with cleanup of old sessions
 SessionSchema.index({ lastUpdate: 1 });

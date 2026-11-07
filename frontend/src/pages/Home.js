@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import io from 'socket.io-client';
+import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
+import { API_URL } from '../config';
 import './Home.css';
-
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
 function Home() {
   const navigate = useNavigate();
@@ -14,6 +13,7 @@ function Home() {
   const [sessionId, setSessionId] = useState('');
   const [sessionName, setSessionName] = useState('');
   const [joinError, setJoinError] = useState('');
+  const [isJoining, setIsJoining] = useState(false);
 
   const generateSessionId = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -32,40 +32,39 @@ function Home() {
     }
   };
 
-  const handleJoinSession = (e) => {
+  // Accept either a raw session ID or a full invite link (…/session/ABC123?name=…)
+  const extractSessionId = (value) => {
+    const trimmed = value.trim();
+    const match = trimmed.match(/\/session\/([^/?#]+)/);
+    return match ? decodeURIComponent(match[1]) : trimmed;
+  };
+
+  const handleJoinSession = async (e) => {
     e.preventDefault();
-    if (sessionId.trim()) {
-      const socket = io(API_URL);
+    const id = extractSessionId(sessionId);
+    if (!id) return;
 
-      socket.on('connect', () => {
-        socket.emit('join-session', {
-          sessionId: sessionId.trim(),
-          userId: user._id,
-          username: user.name,
-          sessionName: null
-        });
-
-        socket.on('session-not-found', () => {
-          setJoinError('Session not found. Please check the session ID and try again.');
-          socket.disconnect();
-        });
-
-        socket.on('session-state', () => {
-          socket.disconnect();
-          navigate(`/session/${sessionId}`);
-        });
-      });
-
-      socket.on('connect_error', (err) => {
-        console.error('Connection error:', err);
+    setJoinError('');
+    setIsJoining(true);
+    try {
+      await axios.get(`${API_URL}/api/sessions/${encodeURIComponent(id)}`);
+      navigate(`/session/${encodeURIComponent(id)}`);
+    } catch (error) {
+      if (error.response?.status === 404) {
+        setJoinError('Session not found. Please check the session ID and try again.');
+      } else if (!error.response) {
         setJoinError('Cannot connect to server. Please try again later.');
-      });
+      } else {
+        setJoinError(error.response.data?.message || 'Could not join the session.');
+      }
+    } finally {
+      setIsJoining(false);
     }
   };
 
-  const handleLogout = () => {
-    logout();
-    navigate('/auth/login');
+  const handleLogout = async () => {
+    await logout();
+    navigate('/auth/login', { replace: true });
   };
 
   return (
@@ -108,7 +107,7 @@ function Home() {
         </div>
 
         <footer className="footer">
-          SyncWave © 2025 | Listening Together
+          SyncWave © {new Date().getFullYear()} | Listening Together
         </footer>
       </div>
 
@@ -166,7 +165,7 @@ function Home() {
               <div className="input-group">
                 <input
                   type="text"
-                  placeholder="Enter Session ID"
+                  placeholder="Enter Session ID or paste invite link"
                   value={sessionId}
                   onChange={(e) => {
                     setSessionId(e.target.value);
@@ -178,8 +177,8 @@ function Home() {
                 {joinError && <div className="error-message">{joinError}</div>}
               </div>
               <div className="modal-actions">
-                <button type="submit" className="btn btn-primary">
-                  Join Session
+                <button type="submit" className="btn btn-primary" disabled={isJoining}>
+                  {isJoining ? 'Joining...' : 'Join Session'}
                 </button>
               </div>
             </form>

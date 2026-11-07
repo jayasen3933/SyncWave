@@ -1,5 +1,5 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
-import { getCurrentUser } from '../services/authServices';
+import React, { createContext, useState, useContext, useEffect, useCallback, useMemo } from 'react';
+import { getCurrentUser, logout as logoutRequest } from '../services/authServices';
 
 const AuthContext = createContext(null);
 
@@ -8,38 +8,45 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        const userData = await getCurrentUser();
-        if (userData) {
-          setUser(userData);
-        }
-      } catch (error) {
-        console.error('Auth initialization error:', error);
-      } finally {
-        setLoading(false);
-      }
+    let cancelled = false;
+    getCurrentUser()
+      .then((userData) => {
+        if (!cancelled) setUser(userData);
+      })
+      .catch((error) => console.error('Auth initialization error:', error))
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
     };
-
-    initAuth();
   }, []);
 
-  const login = async (userData) => {
-    setUser(userData);
-    localStorage.setItem('user', JSON.stringify(userData));
-  };
+  // Accepts the API response ({ ...user, token }) or a plain user object
+  const login = useCallback((userData) => {
+    if (!userData) return;
+    const { token, message, ...profile } = userData;
+    if (token) localStorage.setItem('token', token);
+    localStorage.setItem('user', JSON.stringify(profile));
+    setUser(profile);
+  }, []);
 
-  const logout = () => {
+  const logout = useCallback(async () => {
     setUser(null);
-    localStorage.removeItem('user');
-    localStorage.removeItem('token');
-  };
+    await logoutRequest();
+  }, []);
 
-  return (
-    <AuthContext.Provider value={{ user, login, logout, loading }}>
-      {!loading && children}
-    </AuthContext.Provider>
-  );
+  const value = useMemo(() => ({ user, login, logout, loading }), [user, login, logout, loading]);
+
+  if (loading) {
+    return (
+      <div className="app-loading">
+        <div className="app-spinner" />
+      </div>
+    );
+  }
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
 export const useAuth = () => {

@@ -13,10 +13,23 @@ const SongSchema = new mongoose.Schema({
   duration: {
     type: Number
   },
-  firebaseUrl: {
+url: {
+  type: String,
+  required: true
+},
+  filename: {
     type: String,
     required: true
   },
+  mimeType: {
+    type: String,
+    required: true
+  },
+firebaseUrl: {
+  type: String,
+  required: false
+},
+
   uploadedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',

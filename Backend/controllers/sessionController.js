@@ -1,31 +1,32 @@
 // controllers/sessionController.js
 const Session = require('../models/Session');
-const User = require('../models/User');
 const { nanoid } = require('nanoid');
+
+const sessionResponse = (session) => ({
+  _id: session._id,
+  sessionId: session.sessionId,
+  name: session.name,
+  host: session.host,
+  participants: session.participants,
+  songs: session.songs,
+  currentSong: session.currentSong,
+  currentTime: session.currentTime,
+  isPlaying: session.isPlaying
+});
 
 // @desc    Create a new session
 // @route   POST /api/sessions/create
 // @access  Private
 const createSession = async (req, res) => {
   try {
-    const sessionId = nanoid(10); // Generate a 10-character session ID
-    
     const session = await Session.create({
-      sessionId,
+      sessionId: nanoid(10),
+      name: String(req.body.name || '').trim() || 'Untitled Session',
       host: req.user._id,
       participants: [req.user._id]
     });
 
-    if (session) {
-      res.status(201).json({
-        _id: session._id,
-        sessionId: session.sessionId,
-        host: session.host,
-        participants: session.participants
-      });
-    } else {
-      res.status(400).json({ message: 'Invalid session data' });
-    }
+    res.status(201).json(sessionResponse(session));
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });
@@ -37,66 +38,40 @@ const createSession = async (req, res) => {
 // @access  Private
 const joinSession = async (req, res) => {
   try {
-    const { sessionId } = req.body;
-
+    const sessionId = String(req.body.sessionId || '').trim();
     const session = await Session.findOne({ sessionId });
 
     if (!session) {
       return res.status(404).json({ message: 'Session not found' });
     }
 
-    // Check if user is already in the session
-    if (!session.participants.includes(req.user._id)) {
+    const alreadyIn = session.participants.some((id) => id.equals(req.user._id));
+    if (!alreadyIn) {
       session.participants.push(req.user._id);
       await session.save();
     }
 
     await session.populate('host', 'name email');
-    await session.populate('songs');
-
-    res.json({
-      _id: session._id,
-      sessionId: session.sessionId,
-      host: session.host,
-      participants: session.participants,
-      songs: session.songs,
-      currentSong: session.currentSong,
-      currentPosition: session.currentPosition,
-      isPlaying: session.isPlaying
-    });
+    res.json(sessionResponse(session));
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });
   }
 };
 
-// @desc    Get session details
+// @desc    Get session details (also used to check a session exists before joining)
 // @route   GET /api/sessions/:sessionId
 // @access  Private
 const getSessionById = async (req, res) => {
   try {
-    const { sessionId } = req.params;
-
-    const session = await Session.findOne({ sessionId })
+    const session = await Session.findOne({ sessionId: String(req.params.sessionId).trim() })
       .populate('host', 'name email')
-      .populate('participants', 'name email')
-      .populate('songs')
-      .populate('currentSong');
+      .populate('participants', 'name email');
 
-    if (session) {
-      res.json({
-        _id: session._id,
-        sessionId: session.sessionId,
-        host: session.host,
-        participants: session.participants,
-        songs: session.songs,
-        currentSong: session.currentSong,
-        currentPosition: session.currentPosition,
-        isPlaying: session.isPlaying
-      });
-    } else {
-      res.status(404).json({ message: 'Session not found' });
+    if (!session) {
+      return res.status(404).json({ message: 'Session not found' });
     }
+    res.json(sessionResponse(session));
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });

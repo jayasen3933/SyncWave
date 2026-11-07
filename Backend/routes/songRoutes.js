@@ -52,6 +52,8 @@ const upload = multer({
 // Ensure routes are properly registered with correct middleware
 router.post('/upload', protect, upload.single('song'), uploadSong);
 router.get('/session/:sessionId', protect, getSongsBySession);
-router.get('/:id/stream', protect, streamSong);
+// Browser audio elements cannot attach an Authorization header. The endpoint
+// resolves only the database filename and never accepts a client-supplied path.
+router.get('/:id/stream', streamSong);
 
 module.exports = router;

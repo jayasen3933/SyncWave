@@ -287,11 +287,13 @@ body {
   backdrop-filter: blur(10px);
   height: 100vh;
   min-width: 40%;
+  overflow-y: auto;
 }
 
 .login-card {
-  width: 60%;
-  /* Changed from fixed width to 60% of the login section */
+  width: 100%;
+  max-width: 440px;
+  margin: auto;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -303,19 +305,6 @@ body {
   backdrop-filter: blur(10px);
 }
 
-/* Login specific styles - 60% height */
-.login-form {
-  height: 60%;
-  overflow-y: hidden;
-  /* Hide scrollbar for login */
-}
-
-/* Signup specific styles - 65% height */
-.signup-form {
-  height: 65%;
-  overflow-y: hidden;
-  /* Hide scrollbar for signup */
-}
 
 .login-header {
   text-align: center;
@@ -618,24 +607,6 @@ body {
   }
 }
 
-@media (max-width: 1280px) {
-  .login-card {
-    width: 70%;
-    /* Slightly larger on smaller laptops */
-  }
-
-  .login-form {
-    width: 70%;
-    height: 60%;
-  }
-
-  .signup-form {
-    width: 70%;
-    height: 70%;
-    /* Increase height on smaller screens */
-  }
-}
-
 @media (max-width: 1200px) {
 
   /* Styles for medium screens */
@@ -667,21 +638,6 @@ body {
   .feature-card {
     padding: 0.6rem;
   }
-
-  .login-card {
-    width: 80%;
-  }
-
-  .login-form {
-    width: 80%;
-    height: 60%;
-  }
-
-  .signup-form {
-    width: 80%;
-    height: 75%;
-    /* Further increase height on even smaller screens */
-  }
 }
 
 @media (max-width: 768px) {
@@ -697,11 +653,19 @@ body {
     height: auto;
   }
 
+  .login-section {
+    order: -1;
+    min-height: auto;
+    padding-top: 1.5rem;
+  }
+
   .branding-section {
-    min-height: 100vh;
-    /* Ensure full height on mobile */
     display: flex;
     flex-direction: column;
+  }
+
+  .intro-section p {
+    font-size: 1.1rem;
   }
 
   .branding-header {
@@ -733,21 +697,144 @@ body {
   }
 
   .login-card {
-    width: 85%;
-    height: auto;
-    /* Auto height on mobile */
-    max-width: 100%;
-    /* Allow card to be wider on mobile */
+    width: 100%;
+    max-width: 440px;
+    padding: 1.25rem;
   }
 
-  .login-form,
-  .signup-form {
-    width: 85%;
-    height: auto;
-    /* Auto height on mobile */
-    max-height: 90vh;
-    /* Prevent excessive height on mobile */
-    overflow-y: auto;
-    /* Allow scrolling on mobile if needed */
-  }
+}
+
+/* ── Brand logo ─────────────────────────────── */
+.brand-logo {
+  height: 100px;
+  width: 170px;
+  border-radius: 50%;
+  box-shadow: 0 8px 20px rgba(147, 51, 234, 0.25);
+  flex-shrink: 0;
+}
+
+/* ── Sign In / Create Account tabs ──────────── */
+.auth-tabs {
+  display: flex;
+  background: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 4px;
+  margin-bottom: 1.25rem;
+}
+
+.auth-tab {
+  flex: 1;
+  text-align: center;
+  padding: 0.6rem 0.5rem;
+  border-radius: 7px;
+  color: rgba(255, 255, 255, 0.65);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.95rem;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.auth-tab:hover {
+  color: #fff;
+}
+
+.auth-tab.active {
+  background: var(--primary-color);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(147, 51, 234, 0.35);
+}
+
+.auth-icon {
+  font-size: 2.25rem;
+  margin-bottom: 0.5rem;
+}
+
+/* Password show/hide toggle as text button */
+.toggle-password {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.form-group input.input-error {
+  border-color: var(--error-color);
+}
+
+/* ── Password strength meter ────────────────── */
+.password-strength {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: -0.25rem 0 0.75rem;
+}
+
+.strength-bars {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.strength-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  transition: background 0.2s ease;
+}
+
+.strength-bar.level-1 { background: #ef4444; }
+.strength-bar.level-2 { background: #f59e0b; }
+.strength-bar.level-3 { background: #84cc16; }
+.strength-bar.level-4 { background: #10b981; }
+
+.strength-label {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.7);
+  min-width: 60px;
+  text-align: right;
+}
+
+.error-message a {
+  color: inherit;
+  font-weight: 600;
+}
+
+.switch-auth + .switch-auth {
+  margin-top: 0.4rem;
+}
+
+.secondary-btn {
+  width: 100%;
+  height: 44px;
+  margin-bottom: 1rem;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+}
+
+.secondary-btn:hover {
+  border-color: var(--primary-color);
+}
+
+.dev-note {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px dashed rgba(245, 158, 11, 0.5);
+  color: #fcd34d;
+  padding: 0.75rem;
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.dev-note a {
+  display: block;
+  margin-top: 0.35rem;
+  color: #fde68a;
+  font-weight: 600;
 }

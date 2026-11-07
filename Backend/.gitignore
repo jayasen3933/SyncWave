@@ -1,2 +1,5 @@
 .env
 config/firebase.js
+secrets/
+firebase-service-account.json
+uploads/

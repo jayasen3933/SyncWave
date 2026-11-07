@@ -16,7 +16,42 @@ import {
   faSync
 } from '@fortawesome/free-solid-svg-icons';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+import { API_URL } from '../config';
+import { getToken } from '../services/authServices';
+
+// Rebuild the chat timeline (messages + polls) from the server's session state
+const buildChatHistory = (messages = [], polls = []) => {
+  const pollMessages = polls
+    .filter((poll) => poll && poll.id !== undefined)
+    .map((poll) => ({
+      type: 'poll',
+      poll,
+      sender: poll.creator,
+      timestamp: poll.timestamp || new Date(poll.id).toISOString(),
+    }));
+  return [...messages.filter((m) => m && m.type !== 'poll'), ...pollMessages].sort(
+    (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+  );
+};
+
+// Resolve a song to a playable HTTP URL.
+// Prefer song.url (the streaming endpoint set by the server),
+// fall back to constructing one from _id, and reject raw filesystem paths.
+const getSongUrl = (song) => {
+  if (!song) return '';
+  if (song.url) {
+    // If the stored URL is a relative path like /api/songs/…, make it absolute
+    if (song.url.startsWith('/')) return `${API_URL}${song.url}`;
+    // If it looks like a valid http(s) URL, use it directly
+    if (song.url.startsWith('http://') || song.url.startsWith('https://')) return song.url;
+    // Anything else (e.g. a firebase:// or Windows path) — ignore it
+  }
+  if (song._id) return `${API_URL}/api/songs/${song._id}/stream`;
+  return '';
+};
+
+// Drift threshold in seconds — if further apart than this, hard-seek.
+const DRIFT_THRESHOLD = 1.5;
 
 function Session() {
   const [isReady, setIsReady] = useState(true);
@@ -28,6 +63,7 @@ function Session() {
   const [songs, setSongs] = useState([]);
   const [currentSong, setCurrentSong] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackError, setPlaybackError] = useState('');
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [participantCount, setParticipantCount] = useState(0);
@@ -44,84 +80,138 @@ function Session() {
   const [countdownTime, setCountdownTime] = useState(null);
   const messagesEndRef = useRef(null);
   const audioRef = useRef(null);
+  const playSongRef = useRef(null);
   const socketRef = useRef(null);
   const tsRef = useRef(null);
-  const isLocalUpdate = useRef(false);
-  const lastUpdateTimeRef = useRef(0);
-  const networkLatencyRef = useRef(0);
   const progressBarRef = useRef(null);
   const isSeekingRef = useRef(false);
   const [showCopyMessage, setShowCopyMessage] = useState(false);
   const [uploadStatus, setUploadStatus] = useState({});
   const [bufferProgress, setBufferProgress] = useState(0);
   const [isBuffering, setIsBuffering] = useState(false);
-  const [syncInterval, setSyncInterval] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
-  const MIN_BUFFER_PERCENTAGE = 0.2; // Minimum buffer percentage before starting playback
-  const SYNC_CHECK_INTERVAL = 5000; // Check sync every 5 seconds
-  const SYNC_THRESHOLD = 0.05; // Allowable drift in seconds
+
+  // Guard ref to avoid re-emitting socket events we just received
+  const isRemoteUpdate = useRef(false);
+  // True when the browser refused to autoplay (no user gesture yet on this tab)
+  const autoplayBlockedRef = useRef(false);
+  // The pending "canplay" listener of the last load, so rapid song changes don't stack listeners
+  const pendingCanPlayRef = useRef(null);
+  const rateResetTimeoutRef = useRef(null);
+
+  // Current time on the *server's* clock (timesync offset), used for latency maths.
+  const serverNow = useCallback(
+    () => (tsRef.current && typeof tsRef.current.now === 'function' ? tsRef.current.now() : Date.now()),
+    []
+  );
+
+  // Seconds elapsed since the server stamped an event
+  const secondsSince = useCallback(
+    (serverTimestamp) => (serverTimestamp ? Math.max(0, (serverNow() - serverTimestamp) / 1000) : 0),
+    [serverNow]
+  );
+
+  // ───────────────────────────────────────────────
+  // Audio helpers — single imperative Audio element
+  // ───────────────────────────────────────────────
+
+  const safePlay = useCallback((audio) => {
+    const result = audio.play();
+    if (result && typeof result.then === 'function') {
+      result
+        .then(() => {
+          autoplayBlockedRef.current = false;
+        })
+        .catch((err) => {
+          if (err.name === 'AbortError') return; // interrupted by a newer load/pause: harmless
+          console.warn('Playback failed:', err.message);
+          setIsPlaying(false);
+          if (err.name === 'NotAllowedError') {
+            autoplayBlockedRef.current = true;
+            setPlaybackError('Your browser blocked autoplay. Press Play to join the music in sync.');
+          } else {
+            setPlaybackError('Could not play this song. The file may be missing or unsupported.');
+          }
+        });
+    }
+  }, []);
+
+  // Load a URL into the audio element, seek to startTime, optionally auto-play.
+  // startTime may be a function so the position is computed when the audio is actually ready.
+  const loadAndPlay = useCallback((url, startTime = 0, autoPlay = true) => {
+    const audio = audioRef.current;
+    if (!audio || !url) return;
+
+    const resolvedUrl = new URL(url, window.location.href).href;
+    const needsLoad = (audio.currentSrc || audio.src || '') !== resolvedUrl;
+
+    const applySeekAndPlay = () => {
+      const target = typeof startTime === 'function' ? startTime() : startTime;
+      if (Number.isFinite(target)) {
+        const max = Number.isFinite(audio.duration) ? Math.max(0, audio.duration - 0.25) : Infinity;
+        audio.currentTime = Math.min(Math.max(0, target), max);
+      }
+      if (autoPlay) {
+        safePlay(audio);
+      } else if (!audio.paused) {
+        audio.pause();
+      }
+    };
+
+    if (pendingCanPlayRef.current) {
+      audio.removeEventListener('canplay', pendingCanPlayRef.current);
+      pendingCanPlayRef.current = null;
+    }
+
+    if (needsLoad) {
+      audio.pause();
+      audio.src = resolvedUrl;
+      audio.load();
+      setIsBuffering(true);
+      const onCanPlay = () => {
+        audio.removeEventListener('canplay', onCanPlay);
+        pendingCanPlayRef.current = null;
+        setIsBuffering(false);
+        applySeekAndPlay();
+      };
+      pendingCanPlayRef.current = onCanPlay;
+      audio.addEventListener('canplay', onCanPlay);
+    } else {
+      applySeekAndPlay();
+    }
+  }, [safePlay]);
+
+  // Correct drift: hard-seek when far off, gently nudge playback speed when slightly off.
+  const correctDrift = useCallback((audio, targetTime) => {
+    if (!audio || audio.paused || !Number.isFinite(targetTime)) return;
+    const diff = targetTime - audio.currentTime; // > 0 means we're behind
+    clearTimeout(rateResetTimeoutRef.current);
+
+    if (Math.abs(diff) > DRIFT_THRESHOLD) {
+      audio.playbackRate = 1;
+      audio.currentTime = targetTime;
+    } else if (Math.abs(diff) > 0.08) {
+      audio.playbackRate = diff > 0 ? 1.05 : 0.95;
+      // 5% speed change closes the gap in |diff| / 0.05 seconds
+      rateResetTimeoutRef.current = setTimeout(() => {
+        audio.playbackRate = 1;
+      }, Math.min((Math.abs(diff) / 0.05) * 1000, 2500));
+    } else {
+      audio.playbackRate = 1;
+    }
+  }, []);
+
+  // ───────────────────────────────────────────────
+  // Simple handlers (session name, polls, etc.)
+  // ───────────────────────────────────────────────
 
   const handleSessionCreated = (data) => {
     console.log('Session created:', data);
     setSessionName(data.sessionName);
   };
 
-  const handleSessionJoined = (sessionData) => {
-    console.log('Session joined:', sessionData);
-    setSessionName(sessionData.sessionName);
-    setSongs(sessionData.songs || []);
-    setCurrentSong(sessionData.currentSong || null);
-    setCurrentTime(sessionData.currentTime || 0);
-    setIsPlaying(sessionData.isPlaying || false);
-    setParticipantCount(sessionData.participantCount || 0);
-
-    if (audioRef.current && sessionData.currentSong) {
-      audioRef.current.src = sessionData.currentSong.url;
-      audioRef.current.oncanplay = () => {
-        const clientTime = Date.now();
-        const latency = (clientTime - sessionData.timestamp) / 1000;
-        const serverTimeDiff = (clientTime - sessionData.serverTime) / 1000;
-        const adjustedTime = sessionData.currentTime + latency + serverTimeDiff;
-
-        if (adjustedTime < audioRef.current.duration) {
-          audioRef.current.currentTime = adjustedTime;
-        } else {
-          audioRef.current.currentTime = 0;
-        }
-
-        if (sessionData.isPlaying) {
-          audioRef.current.play().catch((error) => {
-            console.log('Playback failed:', error);
-          });
-        } else {
-          audioRef.current.pause();
-        }
-
-        audioRef.current.oncanplay = null;
-      };
-
-      audioRef.current.load();
-    }
-  };
-
   const handleSessionNameUpdated = (data) => {
     setSessionName(data.sessionName);
-  };
-
-  const handleUserJoined = (userData) => {
-    console.log('User joined:', userData);
-    setParticipantCount((prev) => prev + 1);
-  };
-
-  const handleUserLeft = (userData) => {
-    console.log('User left:', userData);
-    setParticipantCount((prev) => Math.max(1, prev - 1));
-  };
-
-  const handleVolumeChange = (volumeData) => {
-    if (audioRef.current) {
-      audioRef.current.volume = volumeData.volume;
-    }
   };
 
   const handleSongAdded = (newSong) => {
@@ -132,9 +222,13 @@ function Session() {
     setSongs((prev) => prev.filter((song) => song.name !== removedSong.name));
   };
 
-  const handleNextSong = useCallback(() => {
-    isLocalUpdate.current = true;
-    lastUpdateTimeRef.current = Date.now();
+  // ───────────────────────────────────────────────
+  // Playlist controls: next / previous / play-pause / seek
+  // ───────────────────────────────────────────────
+
+  const handleNextSong = useCallback((e) => {
+    if (e) { e.stopPropagation(); e.preventDefault(); }
+    if (songs.length === 0) return;
 
     const currentIndex = songs.findIndex(
       (song) => currentSong && song.name === currentSong.name
@@ -148,30 +242,39 @@ function Session() {
     }
 
     const nextSong = songs[nextIndex];
+    const url = getSongUrl(nextSong);
 
     setCurrentSong(nextSong);
     setCurrentTime(0);
+    setDuration(0);
+    setPlaybackError('');
     setIsPlaying(true);
 
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.src = nextSong.url;
-      audioRef.current.play().catch((error) => {
-        console.log('Playback failed:', error);
-      });
-    }
+    loadAndPlay(url, 0, true);
 
-    // Emit next-song event instead of sync-playback
-    socketRef.current.emit('next-song', {
+    socketRef.current?.emit('next-song', {
       sessionId,
       song: nextSong,
       timestamp: Date.now(),
     });
-  }, [songs, currentSong, sessionId]);
+  }, [songs, currentSong, sessionId, loadAndPlay]);
 
-  const handlePreviousSong = useCallback(() => {
-    isLocalUpdate.current = true;
-    lastUpdateTimeRef.current = Date.now();
+  const handlePreviousSong = useCallback((e) => {
+    if (e) { e.stopPropagation(); e.preventDefault(); }
+    if (songs.length === 0) return;
+
+    // Like most players: if we're more than 3s in, "previous" restarts the current song
+    const audio = audioRef.current;
+    if (currentSong && audio && audio.currentTime > 3) {
+      audio.currentTime = 0;
+      setCurrentTime(0);
+      socketRef.current?.emit('seek', {
+        sessionId,
+        currentTime: 0,
+        isPlaying: !audio.paused,
+      });
+      return;
+    }
 
     const currentIndex = songs.findIndex(
       (song) => currentSong && song.name === currentSong.name
@@ -185,125 +288,216 @@ function Session() {
     }
 
     const prevSong = songs[prevIndex];
+    const url = getSongUrl(prevSong);
 
     setCurrentSong(prevSong);
     setCurrentTime(0);
+    setDuration(0);
+    setPlaybackError('');
     setIsPlaying(true);
 
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.src = prevSong.url;
-      audioRef.current.play().catch((error) => {
-        console.log('Playback failed:', error);
-      });
-    }
+    loadAndPlay(url, 0, true);
 
-    socketRef.current.emit('previous-song', {
+    socketRef.current?.emit('previous-song', {
       sessionId,
       song: prevSong,
       timestamp: Date.now(),
     });
-  }, [songs, currentSong, sessionId]);
+  }, [songs, currentSong, sessionId, loadAndPlay]);
 
-  const handlePlayPause = useCallback(() => {
-    if (audioRef.current) {
-      const currentTime = audioRef.current.currentTime;
-      isLocalUpdate.current = true;
-      lastUpdateTimeRef.current = Date.now();
+  const handlePlayPause = useCallback((e) => {
+    if (e) { e.stopPropagation(); e.preventDefault(); }
+    const audio = audioRef.current;
+    if (!audio) return;
 
-      if (isPlaying) {
-        audioRef.current.pause();
-      } else {
-        audioRef.current.play().catch(error => {
-          console.error('Playback failed:', error);
-          setIsPlaying(false);
-        });
-      }
-
-      setIsPlaying(!isPlaying);
-      socketRef.current.emit('play-pause', {
-        sessionId,
-        isPlaying: !isPlaying,
-        currentTime: currentTime,
-        timestamp: Date.now()
-      });
+    // Nothing selected yet: start the playlist from the first song
+    if (!currentSong) {
+      if (songs.length > 0) playSongRef.current?.(songs[0]);
+      return;
     }
-  }, [sessionId, isPlaying]);
+
+    setPlaybackError('');
+    const url = getSongUrl(currentSong);
+
+    // Autoplay was blocked while the group was already playing: just join in,
+    // at the server's position, without changing anyone else's playback.
+    if (autoplayBlockedRef.current && audio.paused) {
+      autoplayBlockedRef.current = false;
+      if (!audio.currentSrc && url) {
+        loadAndPlay(url, currentTime, true);
+      } else {
+        safePlay(audio);
+      }
+      socketRef.current?.emit('request-sync', { sessionId, clientTime: Date.now() });
+      return;
+    }
+
+    const shouldPlay = audio.paused;
+
+    if (shouldPlay) {
+      if (!audio.currentSrc && url) {
+        loadAndPlay(url, currentTime, true);
+      } else {
+        safePlay(audio);
+      }
+    } else {
+      audio.pause();
+    }
+
+    socketRef.current?.emit('play-pause', {
+      sessionId,
+      isPlaying: shouldPlay,
+      currentTime: audio.currentTime,
+    });
+  }, [currentSong, songs, sessionId, currentTime, loadAndPlay, safePlay]);
 
   const handleSeek = useCallback(
     (e) => {
-      if (!audioRef.current || !progressBarRef.current) return;
+      const audio = audioRef.current;
+      if (!audio || !progressBarRef.current || !Number.isFinite(duration) || duration <= 0) return;
 
       const rect = progressBarRef.current.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const width = rect.width;
-      const percentage = x / width;
+      const percentage = Math.max(0, Math.min(1, x / width));
       const newTime = percentage * duration;
 
-      isLocalUpdate.current = true;
-      lastUpdateTimeRef.current = Date.now();
+      isSeekingRef.current = true;
 
-      audioRef.current.currentTime = newTime;
+      audio.currentTime = newTime;
       setCurrentTime(newTime);
 
-      if (isPlaying) {
-        audioRef.current.play().catch((error) => {
-          console.error('Playback failed after seek:', error);
-          setIsPlaying(false);
-        });
-      }
-
-      // Debounce the seek event
+      // Debounce the seek socket event
       if (seekTimeoutRef.current) {
         clearTimeout(seekTimeoutRef.current);
       }
       seekTimeoutRef.current = setTimeout(() => {
-        socketRef.current.emit('seek', {
+        isSeekingRef.current = false;
+        socketRef.current?.emit('seek', {
           sessionId,
           currentTime: newTime,
           timestamp: Date.now(),
           isPlaying: isPlaying,
         });
-      }, 300); // Delay of 300ms
+      }, 300);
     },
     [sessionId, duration, isPlaying]
   );
 
-  const handleSongUpdate = (data) => {
-    if (!isLocalUpdate.current) {
-      const now = Date.now();
-      const latency = now - data.timestamp;
-      networkLatencyRef.current = latency;
+  // ───────────────────────────────────────────────
+  // Socket event handlers for remote playback updates
+  // ───────────────────────────────────────────────
 
-      if (data.timestamp > lastUpdateTimeRef.current) {
-        lastUpdateTimeRef.current = data.timestamp;
-        setIsPlaying(data.isPlaying);
+  // Apply an authoritative playback state coming from the server/another user.
+  // `stampedAt` is the server time the state refers to; position is extrapolated from it.
+  const applyRemoteState = useCallback(({ song, currentTime: remoteTime = 0, isPlaying: remotePlaying, stampedAt }) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    isRemoteUpdate.current = true;
 
-        if (data.song) {
-          setCurrentSong(data.song);
+    // Explicit null song = playback was cleared (e.g. current song removed)
+    if (song === null) {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+      setCurrentSong(null);
+      setCurrentTime(0);
+      setDuration(0);
+      setIsPlaying(false);
+      isRemoteUpdate.current = false;
+      return;
+    }
+
+    const expectedAt = () => (remoteTime || 0) + (remotePlaying ? secondsSince(stampedAt) : 0);
+    const url = getSongUrl(song);
+    if (song) setCurrentSong(song);
+    setIsPlaying(Boolean(remotePlaying));
+    setPlaybackError('');
+
+    const resolvedNext = url ? new URL(url, window.location.href).href : null;
+    const loadedSrc = audio.currentSrc || audio.src || '';
+
+    if (resolvedNext && loadedSrc !== resolvedNext) {
+      // Different song: load it and seek once it's ready (accounts for load time)
+      if (song) {
+        setDuration(0);
+      }
+      loadAndPlay(url, expectedAt, Boolean(remotePlaying));
+    } else if (loadedSrc) {
+      if (remotePlaying) {
+        if (audio.paused) {
+          audio.currentTime = Math.max(0, expectedAt());
+          safePlay(audio);
+        } else {
+          correctDrift(audio, expectedAt());
         }
-
-        if (audioRef.current) {
-          // Only update time if drift is significant
-          const expectedTime = data.currentTime + latency / 1000;
-          if (Math.abs(audioRef.current.currentTime - expectedTime) > 0.2) {
-            audioRef.current.currentTime = expectedTime;
-          }
-          setCurrentTime(expectedTime);
-
-          if (data.isPlaying) {
-            audioRef.current.play().catch((error) => {
-              console.log('Playback failed:', error);
-              setIsPlaying(false);
-            });
-          } else {
-            audioRef.current.pause();
-          }
-        }
+      } else {
+        if (!audio.paused) audio.pause();
+        if (Math.abs(audio.currentTime - remoteTime) > 0.25) audio.currentTime = Math.max(0, remoteTime);
       }
     }
-    isLocalUpdate.current = false;
-  };
+    setCurrentTime(expectedAt());
+    isRemoteUpdate.current = false;
+  }, [loadAndPlay, safePlay, correctDrift, secondsSince]);
+
+  const handleSongUpdate = useCallback((data) => {
+    applyRemoteState({
+      song: data.song,
+      currentTime: data.currentTime,
+      isPlaying: data.isPlaying,
+      stampedAt: data.serverTime || data.timestamp,
+    });
+  }, [applyRemoteState]);
+
+  const handleTrackChangeEvent = useCallback((data) => {
+    if (!data.song) return;
+    applyRemoteState({
+      song: data.song,
+      currentTime: data.currentTime || 0,
+      isPlaying: data.isPlaying !== false,
+      stampedAt: data.serverTime || data.timestamp,
+    });
+  }, [applyRemoteState]);
+
+  const handleNextSongEvent = handleTrackChangeEvent;
+  const handlePreviousSongEvent = handleTrackChangeEvent;
+
+  const handleSyncPlayback = useCallback((data) => {
+    if (!data.song) return;
+    applyRemoteState({
+      song: data.song,
+      currentTime: data.currentTime,
+      isPlaying: data.isPlaying,
+      stampedAt: data.serverTime,
+    });
+  }, [applyRemoteState]);
+
+  // Periodic drift check answer from the server
+  const handleSyncResponse = useCallback((data) => {
+    const audio = audioRef.current;
+    if (!audio || autoplayBlockedRef.current) return;
+
+    const expected = (data.currentTime || 0) + (data.isPlaying ? secondsSince(data.serverTime) : 0);
+
+    if (data.song && getSongUrl(data.song)) {
+      const url = new URL(getSongUrl(data.song), window.location.href).href;
+      if ((audio.currentSrc || audio.src) !== url) {
+        handleSyncPlayback(data);
+        return;
+      }
+    }
+
+    if (data.isPlaying) {
+      if (audio.paused) {
+        audio.currentTime = Math.max(0, expected);
+        safePlay(audio);
+      } else {
+        correctDrift(audio, expected);
+      }
+    } else if (!audio.paused) {
+      audio.pause();
+    }
+  }, [secondsSince, safePlay, correctDrift, handleSyncPlayback]);
 
   const handlePollVote = (data) => {
     const { pollId, optionIndex, updatedOption } = data;
@@ -319,154 +513,62 @@ function Session() {
     );
   };
 
-  const handleNextSongEvent = (data) => {
-    const now = Date.now();
-    const latency = now - data.timestamp;
-    networkLatencyRef.current = latency;
-
-    if (data.timestamp > lastUpdateTimeRef.current || isLocalUpdate.current) {
-      lastUpdateTimeRef.current = data.timestamp;
-
-      setCurrentSong(data.song);
-      setCurrentTime(0);
-      setIsPlaying(true);
-
-      if (audioRef.current) {
-        audioRef.current.currentTime = 0;
-        audioRef.current.src = data.song.url;
-        audioRef.current.play().catch((error) => {
-          console.log('Playback failed:', error);
-        });
-      }
-    }
-    isLocalUpdate.current = false;
-  };
-
-  const handlePreviousSongEvent = (data) => {
-    const now = Date.now();
-    const latency = now - data.timestamp;
-    networkLatencyRef.current = latency;
-
-    if (data.timestamp > lastUpdateTimeRef.current || isLocalUpdate.current) {
-      lastUpdateTimeRef.current = data.timestamp;
-
-      setCurrentSong(data.song);
-      setCurrentTime(0);
-      setIsPlaying(true);
-
-      if (audioRef.current) {
-        audioRef.current.currentTime = 0;
-        audioRef.current.src = data.song.url;
-        audioRef.current.play().catch((error) => {
-          console.log('Playback failed:', error);
-        });
-      }
-    }
-    isLocalUpdate.current = false;
-  };
-
-  const handleSyncPlayback = useCallback((data) => {
-    if (audioRef.current) {
-      const clientTime = Date.now();
-      const latency = (clientTime - data.clientTime) / 1000;
-      const serverTimeDiff = (clientTime - data.serverTime) / 1000;
-      const adjustedTime = data.currentTime + latency + serverTimeDiff;
-
-      audioRef.current.pause();
-
-      if (adjustedTime < audioRef.current.duration) {
-        audioRef.current.currentTime = adjustedTime;
-      } else {
-        audioRef.current.currentTime = 0;
-      }
-
-      if (data.isPlaying) {
-        setTimeout(() => {
-          audioRef.current.play().catch((error) => {
-            console.log('Playback failed:', error);
-          });
-        }, 20);
-      }
-
-      setCurrentSong(data.song);
-      setCurrentTime(adjustedTime);
-      setIsPlaying(data.isPlaying);
-    }
-  }, []);
-
-  const handleSyncResponse = (data) => {
-    if (audioRef.current) {
-      const clientTime = Date.now();
-      const latency = (clientTime - data.clientTime) / 1000;
-      const serverTimeDiff = (clientTime - data.serverTime) / 1000;
-      const adjustedTime = data.currentTime + latency + serverTimeDiff;
-
-      const drift = Math.abs(audioRef.current.currentTime - adjustedTime);
-      console.log('Current Time:', audioRef.current.currentTime);
-      console.log('Adjusted Time:', adjustedTime);
-      console.log('Drift:', drift);
-
-      // Force sync if drift exceeds the threshold
-      if (drift > SYNC_THRESHOLD) {
-        console.log('Drift detected. Adjusting playback...');
-        audioRef.current.currentTime = adjustedTime;
-
-        if (data.isPlaying) {
-          audioRef.current.play().catch((error) => {
-            console.error('Playback failed during sync:', error);
-            setIsPlaying(false);
-          });
-        } else {
-          audioRef.current.pause();
-        }
-      }
-    }
-  };
-
   const handlePreparePlayback = useCallback((data) => {
-    setIsReady(false); // Disable controls during preparation
+    setIsReady(false);
     if (audioRef.current) {
       audioRef.current.currentTime = data.currentTime;
       setCurrentTime(data.currentTime);
     }
-    socketRef.current.emit('player-ready', {
+    socketRef.current?.emit('player-ready', {
       sessionId,
       userId: user._id,
-      timestamp: tsRef.current.now(),
+      timestamp: tsRef.current ? tsRef.current.now() : Date.now(),
     });
   }, [sessionId, user]);
 
-  const handleStartSyncPlayback = (data) => {
-    if (audioRef.current) {
-      const now = tsRef.current.now();
+  const handleStartSyncPlayback = useCallback((data) => {
+    const audio = audioRef.current;
+    if (audio) {
+      const now = tsRef.current ? tsRef.current.now() : Date.now();
       const timeUntilStart = data.timestamp - now;
 
-      audioRef.current.currentTime = data.currentTime;
+      audio.currentTime = data.currentTime;
       setCurrentTime(data.currentTime);
 
       if (timeUntilStart > 0) {
         setTimeout(() => {
           if (data.isPlaying) {
-            audioRef.current.play().catch(console.error);
+            audio.play().catch(console.error);
             setIsPlaying(true);
           } else {
-            audioRef.current.pause();
+            audio.pause();
             setIsPlaying(false);
           }
         }, timeUntilStart);
       }
     }
     setCountdownTime(null);
-    setIsReady(true); // Re-enable controls after sync
-  };
+    setIsReady(true);
+  }, []);
 
   const handleShareClick = () => {
-    const sessionUrl = window.location.href;
-    navigator.clipboard.writeText(sessionUrl).then(() => {
+    // Clean invite link (no ?name=… creation parameter)
+    const sessionUrl = `${window.location.origin}/session/${encodeURIComponent(sessionId)}`;
+    const done = () => {
       setShowCopyMessage(true);
-      setTimeout(() => setShowCopyMessage(false), 1000); // Changed to 1 second
-    });
+      setTimeout(() => setShowCopyMessage(false), 1500);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(sessionUrl).then(done).catch(() => window.prompt('Copy this invite link:', sessionUrl));
+    } else {
+      // Clipboard API is unavailable over plain http on a LAN IP
+      window.prompt('Copy this invite link:', sessionUrl);
+    }
   };
+
+  // ───────────────────────────────────────────────
+  // Main effect: socket connection + audio element setup
+  // ───────────────────────────────────────────────
 
   useEffect(() => {
     if (!user) {
@@ -475,19 +577,32 @@ function Session() {
     }
 
     // Create socket connection
-    socketRef.current = io(API_URL);
+    socketRef.current = io(API_URL, { auth: { token: getToken() } });
     const socket = socketRef.current;
 
     socket.on('session-not-found', () => {
       alert('Session not found. Please check the session ID and try again.');
-      navigate('/');
+      navigate('/home');
     });
 
-    // Set up timesync
+    socket.on('server-error', (data) => {
+      console.error('Server error:', data);
+    });
+
+    // (Re)join the session on every connect. socket.io gives a new socket id after a
+    // reconnect (server restart, network drop, laptop sleep); without re-joining, the
+    // server would ignore every play/pause/skip from this tab.
     socket.on('connect', () => {
+      socket.emit('join-session', {
+        sessionId,
+        sessionName: searchParams.get('name'),
+      });
+
+      // Clock sync (JSON-RPC over HTTP against the backend's /timesync endpoint)
+      if (tsRef.current) return;
       try {
         tsRef.current = timesync.create({
-          server: socket,
+          server: `${API_URL}/timesync`,
           interval: 10000,
         });
       } catch (error) {
@@ -499,22 +614,12 @@ function Session() {
       }
     });
 
-    // Join session
-    socket.emit('join-session', {
-      sessionId,
-      userId: user._id,
-      username: user.name,
-      sessionName: searchParams.get('name'),
-    });
-
     // Set up event handlers
     const handlers = {
       'participant-count': (count) => {
-        console.log('Received participant count:', count);
         setParticipantCount(count);
       },
       'session-name-updated': (data) => {
-        console.log('Session name updated:', data);
         handleSessionNameUpdated(data);
       },
       'session-state': (data) => {
@@ -522,24 +627,18 @@ function Session() {
         setSongs(data.songs);
         setSessionName(data.sessionName);
         setParticipantCount(data.participantCount);
-        setParticipants(data.participants || []); // Initialize participants from session state
-        if (data.currentSong) {
-          setCurrentSong(data.currentSong);
-          setCurrentTime(data.currentTime);
-          setIsPlaying(data.isPlaying);
-
-          if (audioRef.current) {
-            audioRef.current.src = data.currentSong.url;
-            audioRef.current.currentTime = data.currentTime;
-            if (data.isPlaying) {
-              audioRef.current.play().catch((error) => {
-                console.log('Playback failed:', error);
-              });
-            }
-          }
+        setParticipants(data.participants || []);
+        setMessages(buildChatHistory(data.messages, data.polls));
+        if (data.currentSong && getSongUrl(data.currentSong)) {
+          applyRemoteState({
+            song: data.currentSong,
+            currentTime: data.currentTime,
+            isPlaying: data.isPlaying,
+            stampedAt: data.serverTime,
+          });
         }
       },
-      'song-update': handleSongUpdate,
+      'song-update': (data) => handleSongUpdate(data),
       'poll-vote': handlePollVote,
       'songs-updated': (newSongs) => setSongs(newSongs),
       'chat-message': (message) => {
@@ -557,55 +656,59 @@ function Session() {
         );
       },
       'session-created': handleSessionCreated,
-      'session-joined': handleSessionJoined,
       'user-joined': (data) => {
-        console.log('User joined:', data);
         if (data.participantCount !== undefined) {
           setParticipantCount(data.participantCount);
         }
         if (data.username) {
-          setParticipants(prev => [...prev, {
-            id: data.userId,
-            name: data.username,
-            isCurrentUser: data.userId === user._id
-          }]);
+          setParticipants(prev => [
+            ...prev.filter((p) => p.id !== data.userId),
+            {
+              id: data.userId,
+              name: data.username,
+              isCurrentUser: data.userId === user._id
+            }
+          ]);
         }
       },
       'user-left': (data) => {
-        console.log('User left:', data);
         if (data.participantCount !== undefined) {
           setParticipantCount(data.participantCount);
         }
         if (data.userId) {
-          setParticipants(prev => prev.filter(p => {
-            if (p.id === data.userId) return false;
-            return true; // Keep existing participants with their isCurrentUser flag
-          }));
+          setParticipants(prev => prev.filter(p => p.id !== data.userId));
         }
       },
-      'next-song': handleNextSongEvent,
-      'previous-song': handlePreviousSongEvent,
-      'volume-change': handleVolumeChange,
+      'next-song': (data) => handleNextSongEvent(data),
+      'previous-song': (data) => handlePreviousSongEvent(data),
+      'volume-change': (volumeData) => {
+        if (audioRef.current) {
+          audioRef.current.volume = volumeData.volume;
+        }
+      },
       'song-added': handleSongAdded,
       'song-removed': handleSongRemoved,
-      'sync-playback': (data) => {
-        console.log('Sync playback event received:', data);
-        handleSyncPlayback(data);
-      },
-      'sync-response': (data) => {
-        console.log('Received sync-response:', data);
-        handleSyncResponse(data);
-      },
-      'prepare-playback': handlePreparePlayback,
+      'sync-playback': (data) => handleSyncPlayback(data),
+      'sync-response': (data) => handleSyncResponse(data),
+      'prepare-playback': (data) => handlePreparePlayback(data),
       'ready-state-update': (data) => {
         setReadyCount(data.readyCount);
         setTotalCount(data.totalCount);
       },
       'sync-countdown': (data) => setCountdownTime(data.startTime),
-      'start-sync-playback': handleStartSyncPlayback,
+      'start-sync-playback': (data) => handleStartSyncPlayback(data),
       'connect_error': (err) => {
         console.error('Connection error:', err);
-        alert('Failed to connect to the server. Please try again later.');
+        if (err?.message?.startsWith('Not authorized')) {
+          alert('Your session has expired. Please sign in again.');
+          navigate('/auth/login?error=session_expired');
+          return;
+        }
+        // Network errors: socket.io keeps retrying automatically, so only warn once
+        if (!socket.__warned) {
+          socket.__warned = true;
+          alert('Failed to connect to the server. Retrying...');
+        }
       }
     };
 
@@ -616,160 +719,157 @@ function Session() {
 
     // Cleanup function
     return () => {
-      // Remove all event handlers
       Object.keys(handlers).forEach(event => {
         socket.off(event);
       });
-
-      // Disconnect socket
       socket.disconnect();
-
-      // Cleanup timesync
       if (tsRef.current && typeof tsRef.current.destroy === 'function') {
         tsRef.current.destroy();
       }
+      tsRef.current = null;
     };
-  }, [sessionId, user, searchParams, navigate, handlePreparePlayback, handleSyncPlayback]); // Only dependencies that don't change during normal operation
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, user, searchParams, navigate]);
 
+  // ───────────────────────────────────────────────
+  // Audio event listeners — mounted once via ref
+  // ───────────────────────────────────────────────
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const onTimeUpdate = () => {
+      if (!isSeekingRef.current) {
+        setCurrentTime(audio.currentTime);
+      }
+    };
+
+    const onLoadedMetadata = () => {
+      setDuration(audio.duration);
+    };
+
+    const onDurationChange = () => {
+      if (Number.isFinite(audio.duration)) {
+        setDuration(audio.duration);
+      }
+    };
+
+    const onPlay = () => {
+      setIsPlaying(true);
+      setPlaybackError('');
+    };
+
+    const onPause = () => {
+      // Only update state if it wasn't triggered by our own loadAndPlay
+      setIsPlaying(false);
+    };
+
+    const onEnded = () => {
+      // handled by the ended effect below
+    };
+
+    const onError = () => {
+      const code = audio.error?.code;
+      console.error('Audio error code:', code, 'src:', audio.src);
+      if (audio.src && audio.src !== window.location.href) {
+        setPlaybackError('Audio failed to load. The file may be missing or in an unsupported format.');
+        setIsPlaying(false);
+      }
+    };
+
+    const onWaiting = () => setIsBuffering(true);
+    const onPlaying = () => setIsBuffering(false);
+    const onProgress = () => {
+      if (audio.buffered.length > 0 && Number.isFinite(audio.duration) && audio.duration > 0) {
+        const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
+        setBufferProgress(bufferedEnd / audio.duration);
+      }
+    };
+
+    audio.addEventListener('timeupdate', onTimeUpdate);
+    audio.addEventListener('loadedmetadata', onLoadedMetadata);
+    audio.addEventListener('durationchange', onDurationChange);
+    audio.addEventListener('play', onPlay);
+    audio.addEventListener('pause', onPause);
+    audio.addEventListener('ended', onEnded);
+    audio.addEventListener('error', onError);
+    audio.addEventListener('waiting', onWaiting);
+    audio.addEventListener('playing', onPlaying);
+    audio.addEventListener('progress', onProgress);
+
+    return () => {
+      audio.removeEventListener('timeupdate', onTimeUpdate);
+      audio.removeEventListener('loadedmetadata', onLoadedMetadata);
+      audio.removeEventListener('durationchange', onDurationChange);
+      audio.removeEventListener('play', onPlay);
+      audio.removeEventListener('pause', onPause);
+      audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('error', onError);
+      audio.removeEventListener('waiting', onWaiting);
+      audio.removeEventListener('playing', onPlaying);
+      audio.removeEventListener('progress', onProgress);
+    };
+  }, []); // Run once — audio ref is stable
+
+  // ───────────────────────────────────────────────
+  // Song ended → advance playlist or repeat
+  // ───────────────────────────────────────────────
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const handleEnded = () => {
+      const idx = songs.findIndex((s) => currentSong && s.name === currentSong.name);
+
+      if (idx !== -1 && idx < songs.length - 1) {
+        handleNextSong();
+      } else {
+        setIsPlaying(false);
+        setCurrentTime(0);
+        socketRef.current?.emit('play-pause', {
+          sessionId,
+          isPlaying: false,
+          currentTime: 0,
+          timestamp: Date.now(),
+        });
+      }
+    };
+
+    audio.addEventListener('ended', handleEnded);
+    return () => audio.removeEventListener('ended', handleEnded);
+  }, [currentSong, songs, handleNextSong, sessionId]);
+
+  // ───────────────────────────────────────────────
+  // Periodic sync check
+  // ───────────────────────────────────────────────
+
+  useEffect(() => {
+    if (isPlaying && currentSong) {
+      const interval = setInterval(() => {
+        if (audioRef.current && socketRef.current) {
+          socketRef.current.emit('sync-check', {
+            sessionId,
+            currentTime: audioRef.current.currentTime,
+            clientTime: Date.now(),
+            bufferProgress,
+            isBuffering,
+          });
+        }
+      }, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [isPlaying, currentSong, sessionId, bufferProgress, isBuffering]);
+
+  // Scroll chat to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  useEffect(() => {
-    if (audioRef.current) {
-      const audio = audioRef.current;
-      const handleEnded = () => {
-        const currentIndex = songs.findIndex(
-          (song) => currentSong && song.name === currentSong.name
-        );
-
-        if (currentIndex !== -1 && currentIndex < songs.length - 1) {
-          handleNextSong();
-        } else {
-          setIsPlaying(false);
-          setCurrentTime(0);
-          socketRef.current.emit('play-pause', {
-            sessionId,
-            isPlaying: false,
-            currentTime: 0,
-            timestamp: Date.now(),
-          });
-        }
-      };
-
-      audio.addEventListener('ended', handleEnded);
-      return () => {
-        audio.removeEventListener('ended', handleEnded);
-      };
-    }
-  }, [currentSong, songs, handleNextSong, sessionId]);
-
-  useEffect(() => {
-    if (audioRef.current) {
-      const audio = audioRef.current;
-      const handleCanPlay = () => {
-        if (isPlaying) {
-          audio.play().catch((error) => {
-            console.log('Playback failed:', error);
-          });
-        }
-      };
-
-      const handlePlay = () => {
-        setIsPlaying(true);
-      };
-
-      const handlePause = () => {
-        setIsPlaying(false);
-      };
-
-      audio.addEventListener('canplay', handleCanPlay);
-      audio.addEventListener('play', handlePlay);
-      audio.addEventListener('pause', handlePause);
-
-      return () => {
-        audio.removeEventListener('canplay', handleCanPlay);
-        audio.removeEventListener('play', handlePlay);
-        audio.removeEventListener('pause', handlePause);
-      };
-    }
-  }, [isPlaying]);
-
-  // Add buffer progress tracking
-  useEffect(() => {
-    if (audioRef.current) {
-      const audio = audioRef.current;
-
-      const handleProgress = () => {
-        if (audio.buffered.length > 0) {
-          const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
-          const bufferPercentage = bufferedEnd / audio.duration;
-          setBufferProgress(bufferPercentage);
-
-          // Start playback if enough buffer is loaded
-          if (bufferPercentage >= MIN_BUFFER_PERCENTAGE && isPlaying && !audio.playing) {
-            audio.play().catch(error => {
-              console.error('Playback failed:', error);
-              setIsPlaying(false);
-            });
-          }
-        }
-      };
-
-      const handleWaiting = () => {
-        setIsBuffering(true);
-      };
-
-      const handlePlaying = () => {
-        setIsBuffering(false);
-      };
-
-      audio.addEventListener('progress', handleProgress);
-      audio.addEventListener('waiting', handleWaiting);
-      audio.addEventListener('playing', handlePlaying);
-
-      return () => {
-        audio.removeEventListener('progress', handleProgress);
-        audio.removeEventListener('waiting', handleWaiting);
-        audio.removeEventListener('playing', handlePlaying);
-      };
-    }
-  }, [isPlaying]);
-
-  // Add periodic sync checks
-  useEffect(() => {
-    if (isPlaying && currentSong) {
-      const interval = setInterval(() => {
-        if (audioRef.current) {
-          const currentTime = audioRef.current.currentTime;
-          const clientTime = Date.now();
-
-          console.log('Emitting sync-check:', {
-            sessionId,
-            currentTime,
-            clientTime,
-            bufferProgress,
-            isBuffering,
-          });
-
-          socketRef.current.emit('sync-check', {
-            sessionId,
-            currentTime,
-            clientTime,
-            bufferProgress,
-            isBuffering,
-          });
-        }
-      }, SYNC_CHECK_INTERVAL);
-
-      setSyncInterval(interval);
-
-      return () => {
-        clearInterval(interval);
-        setSyncInterval(null);
-      };
-    }
-  }, [isPlaying, currentSong, sessionId, bufferProgress, isBuffering]);
+  // ───────────────────────────────────────────────
+  // File upload
+  // ───────────────────────────────────────────────
 
   const handleFileUpload = async (event) => {
     const files = event.target.files;
@@ -782,9 +882,7 @@ function Session() {
       const fileExtension = file.name.split('.').pop().toLowerCase();
       if (!supportedFormats.includes(fileExtension)) {
         alert(
-          `File "${file.name}" is not a supported audio format.\nSupported formats: ${supportedFormats.join(
-            ', '
-          )}`
+          `File "${file.name}" is not a supported audio format.\nSupported formats: ${supportedFormats.join(', ')}`
         );
         continue;
       }
@@ -795,21 +893,14 @@ function Session() {
       formData.append('title', file.name);
 
       try {
-        // Set initial upload status
-        console.log('Setting initial upload status for:', file.name);
-        setUploadStatus(prev => {
-          const newStatus = {
-            ...prev,
-            [file.name]: {
-              status: 'uploading',
-              message: `${file.name} is being uploaded by ${user.name}...`
-            }
-          };
-          console.log('New upload status state (detailed):', JSON.stringify(newStatus, null, 2));
-          return newStatus;
-        });
+        setUploadStatus(prev => ({
+          ...prev,
+          [file.name]: {
+            status: 'uploading',
+            message: `${file.name} is being uploaded by ${user.name}...`
+          }
+        }));
 
-        console.log('Starting upload for:', file.name);
         const response = await fetch(`${API_URL}/api/songs/upload`, {
           method: 'POST',
           headers: {
@@ -829,37 +920,30 @@ function Session() {
         try {
           while (true) {
             const { value, done } = await reader.read();
-
             if (done) break;
 
             const chunk = decoder.decode(value, { stream: true });
             buffer += chunk;
 
-            // Process complete JSON objects
             const lines = buffer.split('\n');
-            buffer = lines.pop() || ''; // Keep the last incomplete line in the buffer
+            buffer = lines.pop() || '';
 
             for (const line of lines) {
               if (line.trim()) {
                 try {
                   const update = JSON.parse(line.trim());
-                  console.log('Server status update (detailed):', JSON.stringify(update, null, 2));
 
-                  setUploadStatus(prev => {
-                    console.log('Previous upload status:', JSON.stringify(prev, null, 2));
-                    const newStatus = {
-                      ...prev,
-                      [file.name]: {
-                        status: update.status,
-                        message: update.message
-                      }
-                    };
-                    console.log('New upload status:', JSON.stringify(newStatus, null, 2));
-                    return newStatus;
-                  });
+                  setUploadStatus(prev => ({
+                    ...prev,
+                    [file.name]: {
+                      status: update.status,
+                      message: update.message
+                    }
+                  }));
 
                   if (update.status === 'complete' && update.song) {
                     newSongs.push({
+                      _id: update.song._id,
                       name: update.song.title,
                       url: update.song.url,
                     });
@@ -876,7 +960,6 @@ function Session() {
         } finally {
           reader.releaseLock();
         }
-
       } catch (error) {
         console.error('Error uploading file:', error);
         setUploadStatus(prev => ({
@@ -886,8 +969,6 @@ function Session() {
             message: `Failed to upload "${file.name}" by ${user.name}: ${error.message}`
           }
         }));
-
-        // Auto-clear error message after 3 seconds
         setTimeout(() => {
           setUploadStatus(prev => {
             const newStatus = { ...prev };
@@ -901,14 +982,12 @@ function Session() {
     }
 
     if (newSongs.length > 0) {
-      console.log('Adding songs to session:', newSongs);
-      socketRef.current.emit('upload-songs', {
+      socketRef.current?.emit('upload-songs', {
         sessionId,
         songs: newSongs,
       });
     }
 
-    // Clear successful upload statuses after 5 seconds
     setTimeout(() => {
       setUploadStatus(prev => {
         const newStatus = { ...prev };
@@ -922,70 +1001,58 @@ function Session() {
     }, 5000);
   };
 
-  const playSong = (song) => {
+  // ───────────────────────────────────────────────
+  // playSong: select & play a song from playlist
+  // ───────────────────────────────────────────────
+
+  const playSong = useCallback((song) => {
     if (!audioRef.current) return;
 
-    isLocalUpdate.current = true;
-    lastUpdateTimeRef.current = Date.now();
-    setIsBuffering(true);
+    autoplayBlockedRef.current = false;
+    setPlaybackError('');
 
     setCurrentSong(song);
     setCurrentTime(0);
+    setDuration(0);
     setIsPlaying(true);
 
-    const streamingUrl = `${API_URL}/api/songs/${song._id}/stream`;
-    audioRef.current.src = streamingUrl;
-    audioRef.current.preload = 'auto';
-
-    audioRef.current.onloadedmetadata = () => {
-      setDuration(audioRef.current.duration);
-    };
-
-    audioRef.current.oncanplay = () => {
-      if (bufferProgress >= MIN_BUFFER_PERCENTAGE) {
-        audioRef.current.play().catch(error => {
-          console.error('Playback failed:', error);
-          setIsPlaying(false);
-        });
-      }
-    };
-
-    audioRef.current.onerror = () => {
-      console.error('Error loading audio');
+    const streamingUrl = getSongUrl(song);
+    if (!streamingUrl) {
+      console.error('Cannot play song without a streaming URL:', song);
       setIsPlaying(false);
-      setIsBuffering(false);
-    };
+      setPlaybackError('No audio URL available for this song.');
+      return;
+    }
 
-    socketRef.current.emit('play-song', {
+    // Restart from 0 even if the same song is already loaded
+    if (audioRef.current.currentSrc === new URL(streamingUrl, window.location.href).href) {
+      audioRef.current.currentTime = 0;
+    }
+    loadAndPlay(streamingUrl, 0, true);
+
+    socketRef.current?.emit('play-song', {
       sessionId,
       song,
       currentTime: 0,
       isPlaying: true,
-      timestamp: Date.now(),
     });
-  };
+  }, [sessionId, loadAndPlay]);
 
-  const handleTimeUpdate = () => {
-    if (audioRef.current && !isSeekingRef.current) {
-      setCurrentTime(audioRef.current.currentTime);
-    }
-  };
+  playSongRef.current = playSong;
 
-  const handleLoadedMetadata = () => {
-    if (audioRef.current) {
-      setDuration(audioRef.current.duration);
-    }
-  };
+  // ───────────────────────────────────────────────
+  // Utility functions
+  // ───────────────────────────────────────────────
 
   const formatTime = (time) => {
-    if (!time) return '0:00';
+    if (!Number.isFinite(time) || time < 0) return '0:00';
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
   const handleRemoveSong = (songName) => {
-    socketRef.current.emit('remove-song', {
+    socketRef.current?.emit('remove-song', {
       sessionId,
       songName,
     });
@@ -1005,7 +1072,7 @@ function Session() {
 
     setSongs(newSongs);
 
-    socketRef.current.emit('reorder-songs', {
+    socketRef.current?.emit('reorder-songs', {
       sessionId,
       songs: newSongs,
     });
@@ -1048,7 +1115,7 @@ function Session() {
         timestamp: new Date().toISOString(),
       };
 
-      socketRef.current.emit('new-poll', {
+      socketRef.current?.emit('new-poll', {
         sessionId,
         poll: newPoll,
       });
@@ -1063,9 +1130,7 @@ function Session() {
     const poll = messages.find(
       (msg) => msg.type === 'poll' && msg.poll.id === pollId
     )?.poll;
-    if (!poll) {
-      return;
-    }
+    if (!poll) return;
 
     setMessages((prev) =>
       prev.map((msg) => {
@@ -1086,7 +1151,7 @@ function Session() {
       })
     );
 
-    socketRef.current.emit('poll-vote', {
+    socketRef.current?.emit('poll-vote', {
       sessionId,
       pollId,
       optionIndex,
@@ -1095,7 +1160,7 @@ function Session() {
   };
 
   const handleDeletePoll = (pollId) => {
-    socketRef.current.emit('delete-poll', {
+    socketRef.current?.emit('delete-poll', {
       sessionId,
       pollId,
     });
@@ -1205,6 +1270,13 @@ function Session() {
         sessionId,
         userId: user._id,
       });
+
+      // Stop audio
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+      }
+
       setSongs([]);
       setCurrentSong(null);
       setCurrentTime(0);
@@ -1219,21 +1291,20 @@ function Session() {
   const requestSyncPlayback = useCallback(() => {
     if (audioRef.current && currentSong) {
       setIsSyncing(true);
-      console.log('Manually requesting sync playback');
-      socketRef.current.emit('sync-playback', {
+      socketRef.current?.emit('sync-playback', {
         sessionId,
         currentTime: audioRef.current.currentTime,
         isPlaying: isPlaying,
         song: currentSong,
         clientTime: Date.now(),
       });
-
-      // Reset syncing state after animation
-      setTimeout(() => {
-        setIsSyncing(false);
-      }, 1000);
+      setTimeout(() => setIsSyncing(false), 1000);
     }
   }, [sessionId, isPlaying, currentSong]);
+
+  // ───────────────────────────────────────────────
+  // Render
+  // ───────────────────────────────────────────────
 
   return (
     <div className="session-page">
@@ -1405,7 +1476,7 @@ function Session() {
                   <div className="song-controls">
                     <button
                       className="move-btn up-btn"
-                      onClick={() => handleMoveSong(index, 'up')}
+                      onClick={(e) => { e.stopPropagation(); handleMoveSong(index, 'up'); }}
                       disabled={index === 0}
                       title="Move up"
                     >
@@ -1413,7 +1484,7 @@ function Session() {
                     </button>
                     <button
                       className="move-btn down-btn"
-                      onClick={() => handleMoveSong(index, 'down')}
+                      onClick={(e) => { e.stopPropagation(); handleMoveSong(index, 'down'); }}
                       disabled={index === songs.length - 1}
                       title="Move down"
                     >
@@ -1421,7 +1492,7 @@ function Session() {
                     </button>
                     <button
                       className="remove-btn"
-                      onClick={() => handleRemoveSong(song.name)}
+                      onClick={(e) => { e.stopPropagation(); handleRemoveSong(song.name); }}
                     >
                       ×
                     </button>
@@ -1474,6 +1545,11 @@ function Session() {
               {currentSong ? currentSong.name : 'No song playing'}
               {isBuffering && <span className="buffering-indicator">Buffering...</span>}
             </div>
+            {playbackError && (
+              <div className="playback-error" role="alert">
+                {playbackError}
+              </div>
+            )}
 
             <div className="buffer-progress">
               <div
@@ -1485,11 +1561,14 @@ function Session() {
             <div
               className="progress-container"
               onClick={handleSeek}
+              onMouseMove={(event) => {
+                if (event.buttons === 1 && duration > 0) handleSeek(event);
+              }}
               ref={progressBarRef}
             >
               <div
                 className="progress-bar"
-                style={{ width: `${(currentTime / duration) * 100}%` }}
+                style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
               />
             </div>
 
@@ -1498,32 +1577,31 @@ function Session() {
               <span>{formatTime(duration)}</span>
             </div>
 
-            <audio
-              ref={audioRef}
-              src={currentSong?.url}
-              onTimeUpdate={handleTimeUpdate}
-              onLoadedMetadata={handleLoadedMetadata}
-            />
+            {/* Audio element: no src in JSX — managed imperatively */}
+            <audio ref={audioRef} preload="auto" />
 
             <div className="player-controls">
               <button
                 className="control-btn"
                 onClick={handlePreviousSong}
-                disabled={!currentSong || !isReady}
+                disabled={songs.length === 0 || !isReady}
+                title="Previous"
               >
                 <FontAwesomeIcon icon={faBackward} />
               </button>
               <button
                 className="play-pause-btn"
                 onClick={handlePlayPause}
-                disabled={!currentSong || !isReady}
+                disabled={!currentSong && songs.length === 0}
+                title={isPlaying ? 'Pause' : 'Play'}
               >
                 <FontAwesomeIcon icon={isPlaying ? faPause : faPlay} />
               </button>
               <button
                 className="control-btn"
                 onClick={handleNextSong}
-                disabled={!currentSong || !isReady}
+                disabled={songs.length === 0 || !isReady}
+                title="Next"
               >
                 <FontAwesomeIcon icon={faForward} />
               </button>

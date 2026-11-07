@@ -1,17 +1,20 @@
 // models/User.js
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
-
+const crypto = require('crypto');
 
 const UserSchema = new mongoose.Schema({
   name: {
     type: String,
-    required: true
+    required: true,
+    trim: true
   },
   email: {
     type: String,
     required: true,
-    unique: true
+    unique: true,
+    lowercase: true,
+    trim: true
   },
   password: {
     type: String
@@ -22,6 +25,12 @@ const UserSchema = new mongoose.Schema({
   avatar: {
     type: String
   },
+  resetPasswordToken: {
+    type: String
+  },
+  resetPasswordExpires: {
+    type: Date
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -29,7 +38,7 @@ const UserSchema = new mongoose.Schema({
 });
 
 // Hash password before saving
-UserSchema.pre('save', async function(next) {
+UserSchema.pre('save', async function (next) {
   if (!this.isModified('password') || !this.password) {
     return next();
   }
@@ -40,9 +49,21 @@ UserSchema.pre('save', async function(next) {
 });
 
 // Compare passwords
-UserSchema.methods.matchPassword = async function(enteredPassword) {
-  if (!this.password) return false;
-  return await bcrypt.compare(enteredPassword, this.password);
+UserSchema.methods.matchPassword = async function (enteredPassword) {
+  if (!this.password || !enteredPassword) return false;
+  return bcrypt.compare(enteredPassword, this.password);
 };
+
+// Create a one-time password reset token. The raw token is returned (to be
+// emailed); only its SHA-256 hash is stored in the database.
+UserSchema.methods.createPasswordResetToken = function () {
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  this.resetPasswordToken = crypto.createHash('sha256').update(rawToken).digest('hex');
+  this.resetPasswordExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+  return rawToken;
+};
+
+UserSchema.statics.hashResetToken = (rawToken) =>
+  crypto.createHash('sha256').update(String(rawToken)).digest('hex');
 
 module.exports = mongoose.model('User', UserSchema);

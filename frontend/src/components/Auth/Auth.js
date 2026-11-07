@@ -1,312 +1,246 @@
-import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import "../../Auth.css";
+import React, { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { login as loginRequest, signup as signupRequest, getGoogleLoginUrl } from '../../services/authServices';
+import AuthLayout from './AuthLayout';
+
+const URL_ERRORS = {
+  google_failed: 'Google sign-in failed or was cancelled. Please try again.',
+  google_unavailable: 'Google sign-in is not configured on the server yet. Please use email instead.',
+  session_expired: 'Your session has expired. Please sign in again.',
+};
+
+const EMPTY_FORM = { name: '', email: '', password: '', confirmPassword: '' };
+
+const getPasswordStrength = (password) => {
+  if (!password) return null;
+  let score = 0;
+  if (password.length >= 8) score++;
+  if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score++;
+  if (/\d/.test(password)) score++;
+  if (/[^A-Za-z0-9]/.test(password)) score++;
+  if (password.length < 6) return { label: 'Too short', level: 0 };
+  return [
+    { label: 'Weak', level: 1 },
+    { label: 'Fair', level: 2 },
+    { label: 'Good', level: 3 },
+    { label: 'Strong', level: 4 },
+    { label: 'Strong', level: 4 },
+  ][score];
+};
 
 const Auth = ({ isLogin }) => {
   const { login } = useAuth();
-  const [formData, setFormData] = useState({
-    username: "",
-    email: "",
-    password: "",
-    confirmPassword: "",
-  });
-
-  const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
-
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  const [formData, setFormData] = useState(EMPTY_FORM);
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Show errors passed back from the Google OAuth redirect, etc.
+  useEffect(() => {
+    const code = searchParams.get('error');
+    if (code) setError(URL_ERRORS[code] || 'Something went wrong. Please try again.');
+  }, [searchParams]);
+
+  // Reset the form when switching between Sign In and Create Account
+  useEffect(() => {
+    setFormData((prev) => ({ ...EMPTY_FORM, email: prev.email }));
+    setShowPassword(false);
+    if (!searchParams.get('error')) setError('');
+  }, [isLogin, searchParams]);
 
   const handleInputChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.id]: e.target.value,
-    });
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+    if (error) setError('');
+  };
+
+  const validate = () => {
+    if (!isLogin) {
+      if (!formData.name.trim()) return 'Please enter your name';
+      if (formData.password.length < 6) return 'Password must be at least 6 characters';
+      if (formData.password !== formData.confirmPassword) return 'Passwords do not match';
+    }
+    return '';
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError("");
-    setSuccess("");
-    setIsLoading(true);
-
-    if (!isLogin) {
-      if (formData.password !== formData.confirmPassword) {
-        setError("Passwords do not match");
-        setIsLoading(false);
-        return;
-      }
+    const validationError = validate();
+    if (validationError) {
+      setError(validationError);
+      return;
     }
 
+    setError('');
+    setIsLoading(true);
     try {
-      const endpoint = isLogin ? "login" : "register";
-      const body = isLogin
-        ? { email: formData.email, password: formData.password }
-        : {
-          name: formData.username,
-          email: formData.email,
-          password: formData.password,
-        };
+      const data = isLogin
+        ? await loginRequest(formData.email.trim(), formData.password, rememberMe)
+        : await signupRequest(formData.name.trim(), formData.email.trim(), formData.password);
 
-      const response = await fetch(
-        `${process.env.REACT_APP_API_URL}/api/auth/${endpoint}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          credentials: "include",
-          body: JSON.stringify(body),
-        }
-      );
-
-      const data = await response.json();
-
-      if (response.ok) {
-        // Store the token and user data
-        localStorage.setItem('user', JSON.stringify(data));
-        localStorage.setItem('token', data.token);
-
-        // Update auth context
-        login(data);
-
-        setSuccess(
-          isLogin ? "Login successful!" : "Account created successfully!"
-        );
-
-        // Check if there's a redirect path saved
-        const redirectPath = localStorage.getItem('redirectAfterLogin');
-        localStorage.removeItem('redirectAfterLogin'); // Clear it after getting it
-
-        setTimeout(() => {
-          navigate(redirectPath || '/home');
-        }, 1500);
-      } else {
-        setError(
-          data.message ||
-          `${isLogin ? "Login" : "Signup"} failed. Please try again.`
-        );
-      }
-    } catch (error) {
-      setError("Connection error. Please check your internet and try again.");
-      console.error("Network error:", error);
+      login(data);
+      const redirectPath = localStorage.getItem('redirectAfterLogin');
+      localStorage.removeItem('redirectAfterLogin');
+      navigate(redirectPath || '/home', { replace: true });
+    } catch (err) {
+      setError(err.message);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Replace the existing handleGoogleLogin function
   const handleGoogleLogin = () => {
-    // Store the return URL in localStorage
-    localStorage.setItem('returnTo', '/home');
-
-    // Redirect to Google OAuth endpoint
-    window.location.href = `${process.env.REACT_APP_API_URL}/api/auth/google`;
+    window.location.href = getGoogleLoginUrl();
   };
 
+  const strength = !isLogin ? getPasswordStrength(formData.password) : null;
+  const passwordsMismatch =
+    !isLogin && formData.confirmPassword && formData.password !== formData.confirmPassword;
+
   return (
-    <div className="auth-container">
-      {/* Updated Branding Section */}
-      <div className="branding-section">
-        {/* Updated header with logo and title in top-left */}
-        <div className="branding-header">
-          <div className="logo-container">
-            <div className="logo">
-              <img src="/logo.png" alt="App Logo" className="logo-icon" style={{ height: '100px', width: '170px', borderRadius: '50%' }} />
-            </div>
-            <div className="branding-text">
-              <h1>SyncWave</h1>
-              <p className="tagline">Multi-Device Synchronized Music Player</p>
-            </div>
-          </div>
-        </div>
-
-        {/* New "What is SyncWave?" section */}
-        <div className="intro-section">
-          <h2>What is SyncWave?</h2>
-          <p>
-            SyncWave lets you connect with friends through real-time, synchronized music — share tracks, chat with friends,
-            and enjoy virtual listening parties from anywhere in the world.
-          </p>
-        </div>
-
-        {/* Key Features section - keep structure but adjust styling */}
-        <div className="features-section">
-          <h2>Key Features</h2>
-          <div className="features-grid">
-            <div className="feature-card">
-              <div className="feature-icon">🎧</div>
-              <div className="feature-content">
-                <h3>Synchronized Music</h3>
-                <p>Listen together, perfectly in sync, on any device.</p>
-              </div>
-            </div>
-            <div className="feature-card">
-              <div className="feature-icon">👥</div>
-              <div className="feature-content">
-                <h3>Collaborative Playlists</h3>
-                <p>Create and share playlists with friends in real-time.</p>
-              </div>
-            </div>
-            <div className="feature-card">
-              <div className="feature-icon">🌐</div>
-              <div className="feature-content">
-                <h3>Global Connections</h3>
-                <p>Distance is no barrier - connect with friends worldwide.</p>
-              </div>
-            </div>
-            <div className="feature-card">
-              <div className="feature-icon">🎮</div>
-              <div className="feature-content">
-                <h3>Real-Time Control</h3>
-                <p>Synchronized playback controls across all devices.</p>
-              </div>
-            </div>
-          </div>
-        </div>
+    <AuthLayout>
+      <div className="auth-tabs" role="tablist">
+        <Link to="/auth/login" role="tab" aria-selected={isLogin} className={`auth-tab ${isLogin ? 'active' : ''}`}>
+          Sign In
+        </Link>
+        <Link to="/auth/signup" role="tab" aria-selected={!isLogin} className={`auth-tab ${!isLogin ? 'active' : ''}`}>
+          Create Account
+        </Link>
       </div>
 
-      {/* Login/Signup Form Section */}
-      <div className="login-section mt-10">
-        <div className={`login-card ${isLogin ? 'login-form' : 'signup-form'}`}>
-          <div className="login-header text-center mb-4">
-            <h2>{isLogin ? "Welcome Back" : "Create Account"}</h2>
-            <p>
-              {isLogin
-                ? "Sign in to continue your musical journey"
-                : "Join the music revolution today"}
-            </p>
-          </div>
+      <div className="login-header">
+        <h2>{isLogin ? 'Welcome Back' : 'Create Your Account'}</h2>
+        <p>{isLogin ? 'Sign in to continue your musical journey' : 'New here? Join SyncWave in seconds'}</p>
+      </div>
 
+      <button type="button" className="google-login-btn" onClick={handleGoogleLogin}>
+        <svg className="google-icon" viewBox="0 0 48 48" aria-hidden="true">
+          <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />
+          <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+          <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+          <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z" />
+        </svg>
+        {isLogin ? 'Continue with Google' : 'Sign up with Google'}
+      </button>
+
+      <div className="divider">
+        <span>or {isLogin ? 'sign in' : 'sign up'} with email</span>
+      </div>
+
+      <form onSubmit={handleSubmit} noValidate>
+        {!isLogin && (
+          <div className="form-group">
+            <input
+              type="text"
+              id="name"
+              name="name"
+              value={formData.name}
+              onChange={handleInputChange}
+              placeholder=" "
+              autoComplete="name"
+              maxLength={50}
+              required
+            />
+            <label htmlFor="name">Full Name</label>
+          </div>
+        )}
+
+        <div className="form-group">
+          <input
+            type="email"
+            id="email"
+            name="email"
+            value={formData.email}
+            onChange={handleInputChange}
+            placeholder=" "
+            autoComplete="email"
+            required
+          />
+          <label htmlFor="email">Email</label>
+        </div>
+
+        <div className="form-group password-input">
+          <input
+            type={showPassword ? 'text' : 'password'}
+            id="password"
+            name="password"
+            value={formData.password}
+            onChange={handleInputChange}
+            placeholder=" "
+            autoComplete={isLogin ? 'current-password' : 'new-password'}
+            required
+          />
+          <label htmlFor="password">Password</label>
           <button
             type="button"
-            className="google-login-btn"
-            onClick={handleGoogleLogin}
-            aria-label="Continue with Google"
+            className="toggle-password"
+            onClick={() => setShowPassword(!showPassword)}
+            aria-label={showPassword ? 'Hide password' : 'Show password'}
           >
-            <img
-              src="https://www.google.com/favicon.ico"
-              alt="Google"
-              className="google-icon"
-            />
-            Continue with Google
+            {showPassword ? 'Hide' : 'Show'}
           </button>
-
-          <div className="divider">
-            <span>or continue with email</span>
-          </div>
-
-          <form onSubmit={handleSubmit}>
-            {!isLogin && (
-              <div className="form-group">
-                <input
-                  type="text"
-                  id="username"
-                  value={formData.username}
-                  onChange={handleInputChange}
-                  placeholder=" "
-                  required
-                  aria-label="Username"
-                />
-                <label htmlFor="username">Username</label>
-              </div>
-            )}
-
-            <div className="form-group">
-              <input
-                type="email"
-                id="email"
-                value={formData.email}
-                onChange={handleInputChange}
-                placeholder=" "
-                required
-                aria-label="Email"
-              />
-              <label htmlFor="email">Email</label>
-            </div>
-
-            <div className="form-group">
-              <div className="password-input">
-                <input
-                  type={showPassword ? "text" : "password"}
-                  id="password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  placeholder=" "
-                  required
-                  aria-label="Password"
-                />
-                <label htmlFor="password">Password</label>
-                <button
-                  type="button"
-                  className="toggle-password"
-                  onClick={() => setShowPassword(!showPassword)}
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                >
-                  {showPassword ? "👁️" : "👁️‍🗨️"}
-                </button>
-              </div>
-            </div>
-
-            {!isLogin && (
-              <div className="form-group">
-                <div className="password-input">
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    id="confirmPassword"
-                    value={formData.confirmPassword}
-                    onChange={handleInputChange}
-                    placeholder=" "
-                    required
-                    aria-label="Confirm password"
-                  />
-                  <label htmlFor="confirmPassword">Confirm Password</label>
-                </div>
-              </div>
-            )}
-
-            {isLogin && (
-              <div className="form-options">
-                <label className="remember-me">
-                  <input
-                    type="checkbox"
-                    checked={rememberMe}
-                    onChange={(e) => setRememberMe(e.target.checked)}
-                  />
-                  <span>Remember me</span>
-                </label>
-                <Link to="/forgot-password" className="forgot-password">
-                  Forgot password?
-                </Link>
-              </div>
-            )}
-
-            {error && <div className="error-message">{error}</div>}
-            {success && <div className="success-message">{success}</div>}
-
-            <button type="submit" className="submit-btn" disabled={isLoading}>
-              {isLoading
-                ? isLogin
-                  ? "Signing in..."
-                  : "Creating Account..."
-                : isLogin
-                  ? "Sign In"
-                  : "Create Account"}
-            </button>
-
-            <p className="switch-auth">
-              {isLogin ? "Don't have an account? " : "Already have an account? "}
-              <Link to={isLogin ? "/auth/signup" : "/auth/login"}>
-                {isLogin ? "Sign Up" : "Sign in"}
-              </Link>
-            </p>
-          </form>
         </div>
-      </div>
-    </div>
+
+        {strength && (
+          <div className="password-strength" aria-live="polite">
+            <div className="strength-bars">
+              {[1, 2, 3, 4].map((n) => (
+                <span key={n} className={`strength-bar ${n <= strength.level ? `level-${strength.level}` : ''}`} />
+              ))}
+            </div>
+            <span className="strength-label">{strength.label}</span>
+          </div>
+        )}
+
+        {!isLogin && (
+          <div className="form-group">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              id="confirmPassword"
+              name="confirmPassword"
+              value={formData.confirmPassword}
+              onChange={handleInputChange}
+              placeholder=" "
+              autoComplete="new-password"
+              className={passwordsMismatch ? 'input-error' : ''}
+              required
+            />
+            <label htmlFor="confirmPassword">Confirm Password</label>
+          </div>
+        )}
+
+        {isLogin && (
+          <div className="form-options">
+            <label className="remember-me">
+              <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
+              <span>Remember me</span>
+            </label>
+            <Link to="/auth/forgot-password" className="forgot-password">
+              Forgot password?
+            </Link>
+          </div>
+        )}
+
+        {error && (
+          <div className="error-message" role="alert">
+            {error}
+          </div>
+        )}
+
+        <button type="submit" className="submit-btn" disabled={isLoading}>
+          {isLoading ? (isLogin ? 'Signing in...' : 'Creating account...') : isLogin ? 'Sign In' : 'Create Account'}
+        </button>
+
+        <p className="switch-auth">
+          {isLogin ? "New to SyncWave? " : 'Already have an account? '}
+          <Link to={isLogin ? '/auth/signup' : '/auth/login'}>{isLogin ? 'Create an account' : 'Sign in'}</Link>
+        </p>
+      </form>
+    </AuthLayout>
   );
 };
 
